@@ -238,7 +238,7 @@ const computeActivity = (lastDebitAt: string | null, now: Date): { activity: Act
 
   const dt = new Date(lastDebitAt);
   if (Number.isNaN(dt.getTime())) {
-    return { activity: "pasif", lastUsage: lastCreditAt };
+    return { activity: "pasif", lastUsage: null };
   }
 
   const diffDays = (now.getTime() - dt.getTime()) / (1000 * 60 * 60 * 24);
