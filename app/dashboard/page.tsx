@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { DashboardRole, DashboardUserProfile } from "@/lib/auth/rbac";
 import { roleLabels } from "@/lib/auth/rbac";
@@ -46,6 +46,14 @@ type CampaignResponse = {
 };
 
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-zinc-500">Loading dashboard…</div>}>
+      <DashboardPageContent />
+    </Suspense>
+  );
+}
+
+function DashboardPageContent() {
   const router = useRouter();
   const [profile, setProfile] = useState<DashboardUserProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
