@@ -62,6 +62,18 @@ export type CampaignResult = {
   customers: CampaignCustomer[];
   summary: CampaignSummary;
   companyName?: string | null;
+  surveySummary?: SurveySummary | null;
+};
+
+export type SurveySummary = {
+  totalRespondents: number;
+  completionRate: number; // 0-1
+  averageScore: number; // 1-5
+  nps: number; // -100 to 100
+  satisfactionBreakdown: { name: string; value: number; color: string }[];
+  painPoints: { name: string; value: number }[];
+  insights: string[];
+  quotes: { sentiment: "positif" | "netral" | "negatif"; quote: string }[];
 };
 
 const normalizeName = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
@@ -248,6 +260,217 @@ const computeActivity = (lastDebitAt: string | null, now: Date): { activity: Act
   return { activity: "pasif", lastUsage: dt.toISOString() };
 };
 
+type AnswerRow = {
+  question_id: string;
+  response_id: string;
+  answer_text: string | null;
+  answer_value: number | null;
+  selected_options: unknown;
+};
+
+const SURVEY_TITLE = "Baseline UMKM Feb 2026";
+const RATING_SATISFACTION_ORDER = 12; // Skor kondisi bisnis (1-5)
+const RATING_NPS_ORDER = 25; // Skor kesiapan (1-5) -> dipetakan ke NPS gaya 5 poin
+const PAIN_POINT_ORDER = 24; // Tantangan utama usaha
+
+const colors = {
+  positive: "#22c55e",
+  neutral: "#facc15",
+  negative: "#ef4444",
+};
+
+const toOptionsArray = (value: unknown): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((v) => String(v)).filter(Boolean);
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map((v) => String(v)).filter(Boolean);
+    } catch {
+      // fall through
+    }
+    return value
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const computeSurveySummary = async (companyId?: string | null): Promise<SurveySummary | null> => {
+  const { data: survey, error: surveyErr } = await supabase
+    .from("surveys")
+    .select("id")
+    .eq("title", SURVEY_TITLE)
+    .maybeSingle();
+
+  if (surveyErr) {
+    throw new Error(`Gagal mencari survey: ${surveyErr.message}`);
+  }
+
+  if (!survey?.id) return null;
+
+  const responseQuery = supabase
+    .from("survey_responses")
+    .select("id, completion_time_seconds")
+    .eq("survey_id", survey.id);
+
+  if (companyId) {
+    responseQuery.eq("company_id", companyId);
+  }
+
+  const { data: responses, error: responseErr } = await responseQuery;
+  if (responseErr) {
+    throw new Error(`Gagal memuat responses: ${responseErr.message}`);
+  }
+
+  if (!responses || responses.length === 0) return null;
+
+  const responseIds = responses.map((r) => r.id as string);
+  const { data: questions, error: qErr } = await supabase
+    .from("survey_questions")
+    .select("id, order_index")
+    .eq("survey_id", survey.id);
+
+  if (qErr) {
+    throw new Error(`Gagal memuat questions: ${qErr.message}`);
+  }
+
+  const byOrder = new Map<number, string>();
+  for (const q of questions ?? []) {
+    byOrder.set(q.order_index as number, q.id as string);
+  }
+
+  const targetQuestionIds = Array.from(
+    [RATING_SATISFACTION_ORDER, RATING_NPS_ORDER, PAIN_POINT_ORDER]
+      .map((o) => byOrder.get(o))
+      .filter((v): v is string => Boolean(v))
+  );
+
+  if (targetQuestionIds.length === 0) return null;
+
+  const { data: answers, error: ansErr } = await supabase
+    .from("survey_answers")
+    .select("question_id, response_id, answer_text, answer_value, selected_options")
+    .in("response_id", responseIds)
+    .in("question_id", targetQuestionIds);
+
+  if (ansErr) {
+    throw new Error(`Gagal memuat jawaban survey: ${ansErr.message}`);
+  }
+
+  const satisfactionQ = byOrder.get(RATING_SATISFACTION_ORDER);
+  const npsQ = byOrder.get(RATING_NPS_ORDER);
+  const painQ = byOrder.get(PAIN_POINT_ORDER);
+
+  const satisfactionAnswers = (answers ?? []).filter((a) => a.question_id === satisfactionQ);
+  const npsAnswers = (answers ?? []).filter((a) => a.question_id === npsQ);
+  const painAnswers = (answers ?? []).filter((a) => a.question_id === painQ);
+
+  const ratingValues = satisfactionAnswers
+    .map((a) => (typeof a.answer_value === "number" ? a.answer_value : parseInt(String(a.answer_value ?? a.answer_text ?? ""), 10)))
+    .filter((v) => Number.isFinite(v)) as number[];
+
+  const avgScore =
+    ratingValues.length > 0 ? ratingValues.reduce((sum, v) => sum + v, 0) / ratingValues.length : 0;
+
+  const buckets = { positive: 0, neutral: 0, negative: 0 };
+  const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+
+  satisfactionAnswers.forEach((a) => {
+    const raw =
+      typeof a.answer_value === "number"
+        ? a.answer_value
+        : parseInt(String(a.answer_value ?? a.answer_text ?? ""), 10);
+    const val = Number.isFinite(raw) ? (raw as number) : null;
+    if (!val) return;
+    if (distribution[val as 1 | 2 | 3 | 4 | 5] !== undefined) {
+      distribution[val as 1 | 2 | 3 | 4 | 5] += 1;
+    }
+    if (val >= 4) buckets.positive += 1;
+    else if (val <= 2) buckets.negative += 1;
+    else buckets.neutral += 1;
+  });
+
+  const totalRatings = Object.values(distribution).reduce((a, b) => a + b, 0);
+  const satisfactionBreakdown =
+    totalRatings === 0
+      ? []
+      : [
+          { name: "Puas", value: Math.round((distribution[4] + distribution[5]) / totalRatings * 100), color: colors.positive },
+          { name: "Netral", value: Math.round(distribution[3] / totalRatings * 100), color: colors.neutral },
+          { name: "Tidak Puas", value: Math.round((distribution[1] + distribution[2]) / totalRatings * 100), color: colors.negative },
+        ];
+
+  const painCount = new Map<string, number>();
+  const ratingByResponse = new Map<string, number>();
+  satisfactionAnswers.forEach((a) => {
+    const raw =
+      typeof a.answer_value === "number"
+        ? a.answer_value
+        : parseInt(String(a.answer_value ?? a.answer_text ?? ""), 10);
+    if (Number.isFinite(raw)) ratingByResponse.set(a.response_id, raw as number);
+  });
+
+  painAnswers.forEach((a) => {
+    const options = toOptionsArray(a.selected_options);
+    const base = options.length ? options : [a.answer_text ?? "Lainnya"];
+    for (const item of base) {
+      const key = item || "Lainnya";
+      painCount.set(key, (painCount.get(key) ?? 0) + 1);
+    }
+  });
+
+  const painPoints = Array.from(painCount.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, value]) => ({ name, value: Math.round((value / responses.length) * 100) }));
+
+  const npsValues = npsAnswers
+    .map((a) => (typeof a.answer_value === "number" ? a.answer_value : parseInt(String(a.answer_value ?? a.answer_text ?? ""), 10)))
+    .filter((v) => Number.isFinite(v)) as number[];
+
+  const npsBuckets = { promoters: 0, detractors: 0, total: npsValues.length };
+  npsValues.forEach((v) => {
+    if (v >= 4) npsBuckets.promoters += 1;
+    else if (v <= 2) npsBuckets.detractors += 1;
+  });
+
+  const nps =
+    npsBuckets.total === 0
+      ? 0
+      : Math.round(((npsBuckets.promoters - npsBuckets.detractors) / npsBuckets.total) * 100);
+
+  const quotes: SurveySummary["quotes"] = [];
+  for (const a of painAnswers.slice(0, 5)) {
+    const rating = ratingByResponse.get(a.response_id) ?? 3;
+    const sentiment = rating >= 4 ? "positif" : rating <= 2 ? "negatif" : "netral";
+    const quoteSource = toOptionsArray(a.selected_options)[0] ?? a.answer_text;
+    if (!quoteSource) continue;
+    quotes.push({ sentiment, quote: quoteSource });
+  }
+
+  const insights: string[] = [];
+  if (painPoints.length > 0) insights.push(`Tantangan utama: ${painPoints[0].name}`);
+  if (avgScore) insights.push(`Skor kepuasan rata-rata ${avgScore.toFixed(1)}/5`);
+  insights.push(
+    `Completion rate ${Math.round(
+      (responses.filter((r) => r.completion_time_seconds !== null).length / responses.length) * 100
+    )}%`
+  );
+
+  return {
+    totalRespondents: responses.length,
+    completionRate: responses.filter((r) => r.completion_time_seconds !== null).length / responses.length,
+    averageScore: Number.isFinite(avgScore) ? Number(avgScore.toFixed(2)) : 0,
+    nps,
+    satisfactionBreakdown,
+    painPoints,
+    insights,
+    quotes,
+  };
+};
+
 export async function getCampaignDashboard(
   referralCode: string = CAMPAIGN_REFERRAL_CODE,
   productName: string = PRODUCT_NAME
@@ -257,7 +480,7 @@ export async function getCampaignDashboard(
   let companyName: string | null | undefined = null;
   const { data: company, error: companyError } = await supabase
     .from("companies")
-    .select("name")
+    .select("id, name")
     .eq("metadata->>referral_code", referralCode)
     .maybeSingle();
 
@@ -379,6 +602,8 @@ export async function getCampaignDashboard(
     return { ...customer, activity_status: activity, last_debit_usage: lastUsage };
   });
 
+  const surveySummary = await computeSurveySummary(company?.id as string | undefined);
+
   return {
     customers: customersWithActivity,
     summary: {
@@ -389,5 +614,6 @@ export async function getCampaignDashboard(
       transactions,
     },
     companyName,
+    surveySummary,
   };
 }

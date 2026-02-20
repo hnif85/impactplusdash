@@ -21,7 +21,10 @@ export default function LoginPage() {
   const [authState, setAuthState] = useState<AuthState>({ loading: false, error: null });
   const [profile, setProfile] = useState<DashboardUserProfile | null>(null);
 
-  const formValid = useMemo(() => form.email.trim() !== "" && form.password.length >= 6, [form]);
+  const formValid = useMemo(
+    () => form.email.trim() !== "" && form.password.length > 0,
+    [form]
+  );
 
   useEffect(() => {
     // If token already in localStorage, go to dashboard.
@@ -75,7 +78,7 @@ export default function LoginPage() {
         </p>
         <h1 className="text-3xl font-semibold text-zinc-50">Sign in</h1>
         <p className="mt-1 text-sm text-zinc-200/80">
-          Enter your admin credentials to access the dashboard.
+           Masukan email dan password yang sudah didaftarkan untuk mengakses dashboard.s
         </p>
       </div>
 

@@ -20,17 +20,11 @@ export default function AuthLayout({
                 Impact Plus
               </p>
               <h1 className="mt-4 text-3xl font-semibold text-zinc-50">
-                Admin Dashboard Access
+                Monitoring penggunaan aplikasi
               </h1>
-              <p className="mt-3 text-sm text-zinc-200/80">
-                Sign in with your admin credentials. Roles are enforced for
-                Super Admin and Company Admin users.
-              </p>
+              
             </div>
-            <div>
-               <p>email : admin@mwxai.com</p>
-              <p>Password: Impact@123</p>             
-            </div>
+           
           </div>
           <div className="flex flex-col">{children}</div>
         </div>
