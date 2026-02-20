@@ -673,7 +673,7 @@ function SurveySummarySection({
                 </Pie>
                 <Tooltip
                   contentStyle={{ background: "#0b0b0b", border: "1px solid rgba(255,255,255,0.1)" }}
-                  formatter={(value: number, name: string) => [`${value}%`, name]}
+                  formatter={(value: number | string | undefined, name: string | undefined) => [`${value ?? 0}%`, name ?? ""]}
                 />
                 <Legend />
               </PieChart>
@@ -700,7 +700,7 @@ function SurveySummarySection({
                 />
                 <Tooltip
                   contentStyle={{ background: "#0b0b0b", border: "1px solid rgba(255,255,255,0.1)" }}
-                  formatter={(value: number) => [`${value}%`, "Porsi keluhan"]}
+                  formatter={(value: number | string | undefined) => [`${value ?? 0}%`, "Porsi keluhan"]}
                 />
                 <Bar dataKey="value" radius={[6, 6, 6, 6]} fill="#f97316" />
               </BarChart>
@@ -751,3 +751,5 @@ function SurveySummarySection({
     </section>
   );
 }
+
+
