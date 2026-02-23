@@ -298,9 +298,10 @@ const toOptionsArray = (value: unknown): string[] => {
 };
 
 const computeSurveySummary = async (companyId?: string | null): Promise<SurveySummary | null> => {
-  const { data: survey, error: surveyErr } = await supabase
+  // Cari survey berdasarkan judul tetap; fallback ke survey aktif terbaru jika tidak ada.
+  const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
-    .select("id")
+    .select("id, title")
     .eq("title", SURVEY_TITLE)
     .maybeSingle();
 
@@ -308,20 +309,53 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
     throw new Error(`Gagal mencari survey: ${surveyErr.message}`);
   }
 
-  if (!survey?.id) return null;
+  let surveyId = surveyByTitle?.id as string | undefined;
+
+  if (!surveyId) {
+    const { data: latestSurvey, error: latestErr } = await supabase
+      .from("surveys")
+      .select("id, title")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestErr) {
+      throw new Error(`Gagal memuat survey terbaru: ${latestErr.message}`);
+    }
+
+    surveyId = latestSurvey?.id as string | undefined;
+  }
+
+  if (!surveyId) return null;
 
   const responseQuery = supabase
     .from("survey_responses")
     .select("id, completion_time_seconds")
-    .eq("survey_id", survey.id);
+    .eq("survey_id", surveyId);
 
   if (companyId) {
     responseQuery.eq("company_id", companyId);
   }
 
-  const { data: responses, error: responseErr } = await responseQuery;
+  const { data: responsesFiltered, error: responseErr } = await responseQuery;
   if (responseErr) {
     throw new Error(`Gagal memuat responses: ${responseErr.message}`);
+  }
+
+  let responses = responsesFiltered ?? [];
+
+  // Jika filter company membuat kosong, coba ambil keseluruhan supaya tetap ada ringkasan.
+  if (companyId && responses.length === 0) {
+    const { data: fallbackResponses, error: fallbackErr } = await supabase
+      .from("survey_responses")
+      .select("id, completion_time_seconds")
+      .eq("survey_id", surveyId);
+
+    if (fallbackErr) {
+      throw new Error(`Gagal memuat responses umum: ${fallbackErr.message}`);
+    }
+    responses = fallbackResponses ?? [];
   }
 
   if (!responses || responses.length === 0) return null;
@@ -330,7 +364,7 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
   const { data: questions, error: qErr } = await supabase
     .from("survey_questions")
     .select("id, order_index")
-    .eq("survey_id", survey.id);
+    .eq("survey_id", surveyId);
 
   if (qErr) {
     throw new Error(`Gagal memuat questions: ${qErr.message}`);

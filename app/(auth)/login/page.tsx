@@ -122,11 +122,6 @@ export default function LoginPage() {
           </div>
         )}
       </form>
-
-      <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200/80">
-        Need an account? Ask a Super Admin to invite you via the Supabase auth
-        dashboard and insert your profile into <code className="font-mono">dashboard_users</code>.
-      </div>
     </div>
   );
 }
