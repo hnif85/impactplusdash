@@ -366,7 +366,7 @@ function DashboardPageContent() {
 
       {profile && !error && (
         <>
-          <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl shadow-black/20">
+          <section className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/20 md:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-200">Impact Plus Dashboard</p>
@@ -413,16 +413,16 @@ function DashboardPageContent() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl shadow-black/20">
-            <div className="flex items-center justify-between gap-3">
+          <section className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/20 md:p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Daftar user</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 w-full md:w-auto">
                 <button
                   onClick={handleExport}
                   disabled={exporting || filteredCustomers.length === 0}
-                  className="rounded-xl border border-emerald-400/50 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/80 hover:text-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-xl border border-emerald-400/50 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/80 hover:text-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
                 >
                   {exporting ? "Mengekspor..." : "Export Excel"}
                 </button>
@@ -431,7 +431,7 @@ function DashboardPageContent() {
                   onChange={(e) => {
                     updateActivityFilter(e.target.value as typeof activityFilter);
                   }}
-                  className="rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none"
+                  className="w-full rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none md:w-auto"
                 >
                   <option value="all">Semua activity</option>
                   <option value="active">Active (&lt; 7 hari)</option>
@@ -443,7 +443,7 @@ function DashboardPageContent() {
                   onChange={(e) => {
                     updateSurveyFilter(e.target.value as typeof surveyFilter);
                   }}
-                  className="rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none"
+                  className="w-full rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none md:w-auto"
                 >
                   <option value="all">Semua kuesioner</option>
                   <option value="filled">Sudah isi</option>
@@ -457,9 +457,9 @@ function DashboardPageContent() {
                     setPage(1);
                   }}
                   placeholder="Cari email..."
-                  className="rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-zinc-200/70 focus:outline-none"
+                  className="w-full rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-zinc-200/70 focus:outline-none md:w-56"
                 />
-                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-200">
+                <div className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-200 md:w-auto">
                   {campaignLoading ? "Menyegarkan..." : `${totalCustomers} baris ditampilkan`}
                 </div>
               </div>
@@ -497,7 +497,7 @@ function DashboardPageContent() {
                     return (
                       <article
                         key={key}
-                        className="rounded-2xl border border-white/10 bg-zinc-950/70 p-4 shadow-inner shadow-black/30"
+                        className="rounded-2xl border border-white/10 bg-zinc-950/80 p-4 shadow-inner shadow-black/40"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="space-y-1">
@@ -519,12 +519,12 @@ function DashboardPageContent() {
                         </div>
 
                         <div className="mt-3 space-y-2 text-sm text-zinc-200">
-                          <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                          <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
                             <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Aplikasi</p>
                             <p className="text-zinc-100">{productsLabel}</p>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
                               <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Activity</p>
                               <span className={`mt-1 inline-flex w-fit items-center gap-2 rounded-lg px-3 py-1 text-xs font-semibold ${activityClass}`}>
                                 <span className="h-2 w-2 rounded-full bg-current" />
@@ -539,7 +539,7 @@ function DashboardPageContent() {
                                 {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
                               </p>
                             </div>
-                            <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                            <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
                               <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Kuesioner</p>
                               <span
                                 className={
@@ -561,7 +561,7 @@ function DashboardPageContent() {
                   })}
                 </div>
               )}
-\n              {/* Desktop table */}
+              {/* Desktop table */}
               <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/40 text-zinc-50 shadow-inner shadow-black/30 md:block hidden">
                 <table className="min-w-full divide-y divide-white/10 text-sm">
                   <thead className="bg-white/5">
@@ -591,14 +591,14 @@ function DashboardPageContent() {
                         </td>
                       </tr>
                     )}
-\n                    {!campaignLoading && customers.length === 0 && (
+                    {!campaignLoading && customers.length === 0 && (
                       <tr>
                         <td className="px-4 py-4 text-zinc-200" colSpan={5}>
                           Belum ada customer untuk kode referral ini.
                         </td>
                       </tr>
                     )}
-\n                    {!campaignLoading &&
+                    {!campaignLoading &&
                       paginatedCustomers.map((customer, idx) => {
                         const key = customer.guid ?? customer.email ?? customer.phone ?? `row-${idx}`;
                         const contact = customer.email ?? customer.phone ?? "-";
@@ -679,7 +679,7 @@ function DashboardPageContent() {
                       })}
                   </tbody>
                 </table>
-\n                <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-4 py-3 text-xs text-zinc-200">
+                <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-4 py-3 text-xs text-zinc-200">
                   <span>
                     Halaman {currentPage} dari {totalPages} - Menampilkan{" "}
                     {Math.min((currentPage - 1) * PAGE_SIZE + 1, totalCustomers)}-
