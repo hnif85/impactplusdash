@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed:baseline": "node supabase/seed_baseline_umkm.js"
+    "seed:baseline": "node supabase/seed_baseline_umkm.js",
+    "seed:baseline:bri": "node supabase/seed_baseline_bri.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",

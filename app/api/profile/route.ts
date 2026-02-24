@@ -5,6 +5,7 @@ import {
   getLatestProfileByGuid,
   getTransactionsByUser,
   getCmsCustomerEmailByGuid,
+  getSurveyAnswersByGuid,
 } from "@/lib/profile";
 
 const JWT_SECRET = process.env.IMPACT_LINK_SECRET!;
@@ -21,9 +22,10 @@ export async function GET(req: Request) {
     const guid = url.searchParams.get("guid");
     if (!guid) return NextResponse.json({ error: "guid is required" }, { status: 400 });
 
-    const [profile, transactions] = await Promise.all([
+    const [profile, transactions, surveyAnswers] = await Promise.all([
       getLatestProfileByGuid(guid),
       getTransactionsByUser(guid, 500),
+      getSurveyAnswersByGuid(guid),
     ]);
 
     // When profile row is missing, try to recover email from cms_customers for UI fallback.
@@ -41,7 +43,7 @@ export async function GET(req: Request) {
         };
 
         const daily = aggregateTransactionsDaily(transactions);
-        return NextResponse.json({ profile: fallbackProfile, transactions, daily });
+        return NextResponse.json({ profile: fallbackProfile, transactions, daily, surveyAnswers });
       }
 
       return NextResponse.json({ error: "Profile not found" }, { status: 404 });
@@ -49,7 +51,7 @@ export async function GET(req: Request) {
 
     const daily = aggregateTransactionsDaily(transactions);
 
-    return NextResponse.json({ profile, transactions, daily });
+    return NextResponse.json({ profile, transactions, daily, surveyAnswers });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unexpected error" }, { status: 500 });
   }

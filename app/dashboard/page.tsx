@@ -29,6 +29,7 @@ type CampaignCustomer = {
   expires_at: string | null;
   activity_status: "active" | "idle" | "pasif";
   last_debit_usage: string | null;
+  survey_completed: boolean;
 };
 
 type CampaignSummary = {
@@ -68,6 +69,7 @@ function DashboardPageContent() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [activityFilter, setActivityFilter] = useState<"all" | "active" | "idle" | "pasif">("all");
+  const [surveyFilter, setSurveyFilter] = useState<"all" | "filled" | "empty">("all");
   const [page, setPage] = useState(1);
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -79,22 +81,44 @@ function DashboardPageContent() {
     } else {
       setActivityFilter("all");
     }
+
+    const surveyFromUrl = searchParams.get("survey");
+    if (surveyFromUrl === "filled" || surveyFromUrl === "empty") {
+      setSurveyFilter(surveyFromUrl);
+    } else {
+      setSurveyFilter("all");
+    }
   }, [searchParams]);
 
-  const updateActivityFilter = (value: typeof activityFilter) => {
-    setActivityFilter(value);
-    setPage(1);
-
+  const updateFiltersInUrl = (nextActivity: typeof activityFilter, nextSurvey: typeof surveyFilter) => {
     const nextParams = new URLSearchParams(Array.from(searchParams.entries()));
-    if (value === "all") {
+    if (nextActivity === "all") {
       nextParams.delete("activity");
     } else {
-      nextParams.set("activity", value);
+      nextParams.set("activity", nextActivity);
+    }
+
+    if (nextSurvey === "all") {
+      nextParams.delete("survey");
+    } else {
+      nextParams.set("survey", nextSurvey);
     }
 
     const qs = nextParams.toString();
     const nextUrl = qs ? `${pathname}?${qs}` : pathname;
     router.replace(nextUrl, { scroll: false });
+  };
+
+  const updateActivityFilter = (value: typeof activityFilter) => {
+    setActivityFilter(value);
+    setPage(1);
+    updateFiltersInUrl(value, surveyFilter);
+  };
+
+  const updateSurveyFilter = (value: typeof surveyFilter) => {
+    setSurveyFilter(value);
+    setPage(1);
+    updateFiltersInUrl(activityFilter, value);
   };
 
   useEffect(() => {
@@ -212,9 +236,15 @@ function DashboardPageContent() {
         ? (c.email ?? c.guid ?? "").toLowerCase().includes(term)
         : true;
       const matchesActivity = activityFilter === "all" ? true : c.activity_status === activityFilter;
-      return matchesSearch && matchesActivity;
+      const matchesSurvey =
+        surveyFilter === "all"
+          ? true
+          : surveyFilter === "filled"
+            ? c.survey_completed
+            : !c.survey_completed;
+      return matchesSearch && matchesActivity && matchesSurvey;
     });
-  }, [activityFilter, customers, searchTerm]);
+  }, [activityFilter, customers, searchTerm, surveyFilter]);
 
   const customerActivity = useMemo(
     () => {
@@ -263,6 +293,7 @@ function DashboardPageContent() {
         "Telepon",
         "Referral Code",
         "Activity",
+        "Status Kuesioner",
         "Status",
         "Terakhir Debit",
         "Expired At",
@@ -288,6 +319,7 @@ function DashboardPageContent() {
           customer.phone ?? "",
           customer.referal_code ?? "",
           customer.activity_status,
+          customer.survey_completed ? "Sudah isi" : "Belum isi",
           customer.status,
           customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-",
           customer.expires_at ? formatDate(customer.expires_at) : "-",
@@ -301,7 +333,13 @@ function DashboardPageContent() {
 
       const dateStamp = new Date().toISOString().slice(0, 10);
       const activityTag = activityFilter === "all" ? "semua" : activityFilter;
-      const filename = `users-${activityTag}-${dateStamp}.xlsx`;
+      const surveyTag =
+        surveyFilter === "all"
+          ? "kuis-semua"
+          : surveyFilter === "filled"
+            ? "sudah-isi"
+            : "belum-isi";
+      const filename = `users-${activityTag}-${surveyTag}-${dateStamp}.xlsx`;
 
       XLSX.writeFile(workbook, filename);
     } catch (err) {
@@ -333,7 +371,7 @@ function DashboardPageContent() {
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-200">Impact Plus Dashboard</p>
                 <h1 className="text-2xl font-semibold text-white">
-                  Dashboard untuk program {companyName ?? "CB6aXl"}
+                  Dashboard untuk program {companyName}
                 </h1>
               </div>
             </div>
@@ -400,6 +438,17 @@ function DashboardPageContent() {
                   <option value="idle">Idle (7 - 30 hari)</option>
                   <option value="pasif">Pasif (&gt; 30 hari)</option>
                 </select>
+                <select
+                  value={surveyFilter}
+                  onChange={(e) => {
+                    updateSurveyFilter(e.target.value as typeof surveyFilter);
+                  }}
+                  className="rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none"
+                >
+                  <option value="all">Semua kuesioner</option>
+                  <option value="filled">Sudah isi</option>
+                  <option value="empty">Belum isi</option>
+                </select>
                 <input
                   type="search"
                   value={searchTerm}
@@ -433,6 +482,9 @@ function DashboardPageContent() {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
                       Activity
                     </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                      Kuesioner
+                    </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-200">
                       Action
                     </th>
@@ -441,7 +493,7 @@ function DashboardPageContent() {
                 <tbody className="divide-y divide-white/10 bg-white/5 text-zinc-50">
                   {campaignLoading && (
                     <tr>
-                      <td className="px-4 py-4 text-zinc-200" colSpan={4}>
+                      <td className="px-4 py-4 text-zinc-200" colSpan={5}>
                         Memuat data campaign...
                       </td>
                     </tr>
@@ -449,7 +501,7 @@ function DashboardPageContent() {
 
                   {!campaignLoading && customers.length === 0 && (
                     <tr>
-                      <td className="px-4 py-4 text-zinc-200" colSpan={4}>
+                      <td className="px-4 py-4 text-zinc-200" colSpan={5}>
                         Belum ada customer untuk kode referral ini.
                       </td>
                     </tr>
@@ -505,6 +557,20 @@ function DashboardPageContent() {
                               </span>
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-sm">
+                            <span
+                              className={
+                                customer.survey_completed
+                                  ? "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50"
+                                  : "inline-flex w-fit items-center gap-2 rounded-lg bg-zinc-700/50 px-3 py-1 text-zinc-100 ring-1 ring-white/10"
+                              }
+                            >
+                              <span
+                                className={`h-2 w-2 rounded-full ${customer.survey_completed ? "bg-emerald-400" : "bg-zinc-400"}`}
+                              />
+                              {customer.survey_completed ? "Sudah isi" : "Belum isi"}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 text-right">
                             {customer.guid ? (
                               <a
@@ -553,5 +619,3 @@ function DashboardPageContent() {
     </>
   );
 }
-
-

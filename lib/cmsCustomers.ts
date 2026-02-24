@@ -48,6 +48,7 @@ export type CampaignCustomer = {
   expires_at: string | null;
   activity_status: ActivityStatus;
   last_debit_usage: string | null;
+  survey_completed: boolean;
 };
 
 export type CampaignSummary = {
@@ -77,6 +78,9 @@ export type SurveySummary = {
 };
 
 const normalizeName = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
+const normalizeEmail = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
+const normalizePhone = (value: string | null | undefined) =>
+  value ? value.replace(/\D+/g, "") : "";
 
 const toSubscribeList = (value: unknown): string[] => {
   if (!value) return [];
@@ -297,7 +301,7 @@ const toOptionsArray = (value: unknown): string[] => {
   return [];
 };
 
-const computeSurveySummary = async (companyId?: string | null): Promise<SurveySummary | null> => {
+const resolveBaselineSurveyId = async (): Promise<string | null> => {
   // Cari survey berdasarkan judul tetap; fallback ke survey aktif terbaru jika tidak ada.
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
@@ -309,24 +313,25 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
     throw new Error(`Gagal mencari survey: ${surveyErr.message}`);
   }
 
-  let surveyId = surveyByTitle?.id as string | undefined;
+  if (surveyByTitle?.id) return surveyByTitle.id as string;
 
-  if (!surveyId) {
-    const { data: latestSurvey, error: latestErr } = await supabase
-      .from("surveys")
-      .select("id, title")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  const { data: latestSurvey, error: latestErr } = await supabase
+    .from("surveys")
+    .select("id, title")
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-    if (latestErr) {
-      throw new Error(`Gagal memuat survey terbaru: ${latestErr.message}`);
-    }
-
-    surveyId = latestSurvey?.id as string | undefined;
+  if (latestErr) {
+    throw new Error(`Gagal memuat survey terbaru: ${latestErr.message}`);
   }
 
+  return (latestSurvey?.id as string | undefined) ?? null;
+};
+
+const computeSurveySummary = async (companyId?: string | null): Promise<SurveySummary | null> => {
+  const surveyId = await resolveBaselineSurveyId();
   if (!surveyId) return null;
 
   const responseQuery = supabase
@@ -554,6 +559,56 @@ export async function getCampaignDashboard(
 
   const cohort = dedupeCustomers(filtered);
 
+  // Siapkan lookup app_users berdasarkan email/telepon untuk status kuesioner.
+  const emailLookup = new Map<string, string>();
+  const phoneLookup = new Map<string, string>();
+  const emailList = Array.from(
+    new Set(
+      cohort
+        .map((row) => normalizeEmail(row.email))
+        .filter((v): v is string => Boolean(v))
+    )
+  );
+  const phoneList = Array.from(
+    new Set(
+      cohort
+        .map((row) => normalizePhone(row.phone_number))
+        .filter((v): v is string => Boolean(v))
+    )
+  );
+
+  if (emailList.length > 0) {
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("id, email")
+      .in("email", emailList);
+
+    if (error) {
+      throw new Error(`Failed to load app_users by email: ${error.message}`);
+    }
+
+    (data ?? []).forEach((row) => {
+      const key = normalizeEmail(row.email as string | null | undefined);
+      if (key) emailLookup.set(key, row.id as string);
+    });
+  }
+
+  if (phoneList.length > 0) {
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("id, phone")
+      .in("phone", phoneList);
+
+    if (error) {
+      throw new Error(`Failed to load app_users by phone: ${error.message}`);
+    }
+
+    (data ?? []).forEach((row) => {
+      const key = normalizePhone(row.phone as string | null | undefined);
+      if (key) phoneLookup.set(key, row.id as string);
+    });
+  }
+
   // Use UTC to align with default Supabase/Postgres timezone.
   const now = new Date();
   const uniqueGuids = new Set<string>();
@@ -583,8 +638,14 @@ export async function getCampaignDashboard(
       expires_at: expiresAt,
       activity_status: "pasif",
       last_debit_usage: null,
+      survey_completed: false,
     };
   });
+
+  const appUserIds = new Set<string>([
+    ...Array.from(emailLookup.values()),
+    ...Array.from(phoneLookup.values()),
+  ]);
 
   const cohortGuids = Array.from(uniqueGuids);
   let purchasers = 0;
@@ -630,10 +691,44 @@ export async function getCampaignDashboard(
     }
   }
 
+  let surveyRespondents = new Set<string>();
+  if (appUserIds.size > 0) {
+    const surveyId = await resolveBaselineSurveyId();
+    if (surveyId) {
+      const { data: responses, error: responseErr } = await supabase
+        .from("survey_responses")
+        .select("user_id")
+        .eq("survey_id", surveyId)
+        .in("user_id", Array.from(appUserIds));
+
+      if (responseErr) {
+        throw new Error(`Failed to load survey responses: ${responseErr.message}`);
+      }
+
+      surveyRespondents = new Set(
+        (responses ?? [])
+          .map((row) => row.user_id as string | null)
+          .filter((v): v is string => Boolean(v))
+      );
+    }
+  }
+
   const customersWithActivity = campaignCustomers.map((customer) => {
     const lastDebit = customer.guid ? lastDebitByUser.get(customer.guid) ?? null : null;
     const { activity, lastUsage } = computeActivity(lastDebit, now);
-    return { ...customer, activity_status: activity, last_debit_usage: lastUsage };
+    const emailKey = normalizeEmail(customer.email);
+    const phoneKey = normalizePhone(customer.phone);
+    const appUserId =
+      (emailKey ? emailLookup.get(emailKey) : undefined) ??
+      (phoneKey ? phoneLookup.get(phoneKey) : undefined);
+    const surveyCompleted = appUserId ? surveyRespondents.has(appUserId) : false;
+
+    return {
+      ...customer,
+      activity_status: activity,
+      last_debit_usage: lastUsage,
+      survey_completed: surveyCompleted,
+    };
   });
 
   const surveySummary = await computeSurveySummary(company?.id as string | undefined);
