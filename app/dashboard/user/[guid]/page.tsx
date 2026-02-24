@@ -56,6 +56,9 @@ interface SurveyAnswer {
   selected_options: string[];
 }
 
+type AnswerLike = Pick<SurveyAnswer, "selected_options" | "answer_text" | "answer_value"> &
+  Partial<SurveyAnswer>;
+
 const CW_BASE = "https://createwhiz.ai";
 const withBase = (url?: string | null) => {
   if (!url) return "";
@@ -168,7 +171,7 @@ export default function UserDetailPage() {
     });
   };
 
-  const renderAnswerValue = (answer: SurveyAnswer) => {
+  const renderAnswerValue = (answer: AnswerLike) => {
     if (answer.selected_options?.length) return answer.selected_options.join(", ");
     if (answer.answer_text) return answer.answer_text;
     if (answer.answer_value !== null && answer.answer_value !== undefined) return String(answer.answer_value);
@@ -180,7 +183,7 @@ export default function UserDetailPage() {
   );
   const phoneDisplay =
     profile?.phone ||
-    renderAnswerValue(surveyPhone ?? { selected_options: [], answer_text: null, answer_value: null } as SurveyAnswer) ||
+    renderAnswerValue(surveyPhone ?? { selected_options: [], answer_text: null, answer_value: null }) ||
     "-";
 
   const pickAnswer = (...keywords: string[]) => {
