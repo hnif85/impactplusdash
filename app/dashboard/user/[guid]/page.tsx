@@ -178,6 +178,11 @@ export default function UserDetailPage() {
     return "-";
   };
 
+  const formatAmount = (value: number | null | undefined, prefix = "") => {
+    if (value === null || value === undefined) return "-";
+    return `${prefix}${Math.abs(value).toLocaleString("id-ID")}`;
+  };
+
   const surveyPhone = surveyAnswers.find((ans) =>
     (ans.question_text || "").toLowerCase().includes("whatsapp")
   );
@@ -450,34 +455,80 @@ export default function UserDetailPage() {
                       Belum ada transaksi untuk user ini.
                     </div>
                   ) : (
-                    <div className="overflow-hidden rounded-xl border border-white/10">
-                      <table className="min-w-full divide-y divide-white/10 text-sm">
-                        <thead className="bg-white/5 text-zinc-400">
-                          <tr>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Produk</th>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Tanggal</th>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Count</th>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Debit</th>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Credit</th>
-                            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Net</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/10 bg-zinc-950/40 text-zinc-50">
-                          {dailyAgg.map((row) => (
-                            <tr key={`${row.product_name}-${row.date}`} className="hover:bg-white/5 transition-colors">
-                              <td className="px-3 py-2.5 font-medium">{row.product_name ?? "-"}</td>
-                              <td className="px-3 py-2.5 text-zinc-300">
-                                {new Date(row.date).toLocaleDateString("id-ID", { year: "numeric", month: "short", day: "numeric" })}
-                              </td>
-                              <td className="px-3 py-2.5 text-zinc-300">{row.total_count}</td>
-                              <td className="px-3 py-2.5 text-rose-400">-{row.debit_amount}</td>
-                              <td className="px-3 py-2.5 text-emerald-400">+{row.credit_amount}</td>
-                              <td className="px-3 py-2.5 font-semibold text-white">{row.net_amount}</td>
+                    <>
+                      {/* Mobile: card list */}
+                      <div className="grid gap-3 md:hidden">
+                        {dailyAgg.map((row) => (
+                          <article
+                            key={`${row.product_name}-${row.date}`}
+                            className="rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-black p-4 shadow-lg shadow-black/30"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Produk</p>
+                                <p className="text-base font-semibold text-white leading-tight">{row.product_name ?? "-"}</p>
+                              </div>
+                              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-zinc-200">
+                                {row.total_count}x
+                              </span>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                              <div className="rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Tanggal</p>
+                                <p className="text-zinc-100">
+                                  {new Date(row.date).toLocaleDateString("id-ID", {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                  })}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Debit</p>
+                                <p className="text-rose-300 font-semibold">{formatAmount(row.debit_amount, "-")}</p>
+                              </div>
+                              <div className="rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Credit</p>
+                                <p className="text-emerald-300 font-semibold">{formatAmount(row.credit_amount, "+")}</p>
+                              </div>
+                              <div className="rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                                <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Net</p>
+                                <p className="font-semibold text-white">{formatAmount(row.net_amount)}</p>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                      {/* Desktop: table */}
+                      <div className="hidden overflow-hidden rounded-xl border border-white/10 md:block">
+                        <table className="min-w-full divide-y divide-white/10 text-sm">
+                          <thead className="bg-white/5 text-zinc-400">
+                            <tr>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Produk</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Tanggal</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Count</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Debit</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Credit</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide">Net</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                          </thead>
+                          <tbody className="divide-y divide-white/10 bg-zinc-950/40 text-zinc-50">
+                            {dailyAgg.map((row) => (
+                              <tr key={`${row.product_name}-${row.date}`} className="hover:bg-white/5 transition-colors">
+                                <td className="px-3 py-2.5 font-medium">{row.product_name ?? "-"}</td>
+                                <td className="px-3 py-2.5 text-zinc-300">
+                                  {new Date(row.date).toLocaleDateString("id-ID", { year: "numeric", month: "short", day: "numeric" })}
+                                </td>
+                                <td className="px-3 py-2.5 text-zinc-300">{row.total_count}</td>
+                                <td className="px-3 py-2.5 text-rose-400">{formatAmount(row.debit_amount, "-")}</td>
+                                <td className="px-3 py-2.5 text-emerald-400">{formatAmount(row.credit_amount, "+")}</td>
+                                <td className="px-3 py-2.5 font-semibold text-white">{formatAmount(row.net_amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   )}
                 </div>
 

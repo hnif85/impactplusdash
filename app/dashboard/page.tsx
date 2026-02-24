@@ -469,82 +469,64 @@ function DashboardPageContent() {
               <p className="mt-2 text-xs text-amber-300">{exportError}</p>
             )}
 
-            <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/40 text-zinc-50 shadow-inner shadow-black/30">
-              <table className="min-w-full divide-y divide-white/10 text-sm">
-                <thead className="bg-white/5">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                      Nama / Email
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                      Aplikasi yang dipergunakan
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                      Activity
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                      Kuesioner
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10 bg-white/5 text-zinc-50">
-                  {campaignLoading && (
-                    <tr>
-                      <td className="px-4 py-4 text-zinc-200" colSpan={5}>
-                        Memuat data campaign...
-                      </td>
-                    </tr>
-                  )}
+            <div className="mt-4 space-y-3">
+              {/* Mobile cards */}
+              {!campaignLoading && customers.length > 0 && (
+                <div className="grid gap-3 md:hidden">
+                  {paginatedCustomers.map((customer, idx) => {
+                    const key = customer.guid ?? customer.email ?? customer.phone ?? `card-${idx}`;
+                    const contact = customer.email ?? customer.phone ?? "-";
+                    const productsLabel =
+                      customer.product_list && customer.product_list.length > 0
+                        ? customer.product_list
+                            .map((p) => {
+                              const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
+                              const exp = p.expired_at ? formatDate(p.expired_at) : "-";
+                              return `${name} (exp ${exp})`;
+                            })
+                            .join(", ")
+                        : customer.subscribe_list.length > 0
+                          ? customer.subscribe_list.join(", ")
+                          : "-";
+                    const activityClass = {
+                      active: "bg-emerald-600/15 text-emerald-100 ring-1 ring-emerald-500/50",
+                      idle: "bg-amber-500/15 text-amber-100 ring-1 ring-amber-400/60",
+                      pasif: "bg-red-500/15 text-red-100 ring-1 ring-red-400/60",
+                    }[customer.activity_status];
 
-                  {!campaignLoading && customers.length === 0 && (
-                    <tr>
-                      <td className="px-4 py-4 text-zinc-200" colSpan={5}>
-                        Belum ada customer untuk kode referral ini.
-                      </td>
-                    </tr>
-                  )}
-
-                  {!campaignLoading &&
-                    paginatedCustomers.map((customer, idx) => {
-                      const key = customer.guid ?? customer.email ?? customer.phone ?? `row-${idx}`;
-                      const contact = customer.email ?? customer.phone ?? "-";
-                      const productsLabel =
-                        customer.product_list && customer.product_list.length > 0
-                          ? customer.product_list
-                              .map((p) => {
-                                const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
-                                const exp = p.expired_at ? formatDate(p.expired_at) : "-";
-                                return `${name} (exp ${exp})`;
-                              })
-                              .join(", ")
-                          : customer.subscribe_list.length > 0
-                            ? customer.subscribe_list.join(", ")
-                            : "-";
-                      return (
-                        <tr key={key} className="hover:bg-white/10">
-                          <td className="px-4 py-4">
-                            <div className="font-semibold text-zinc-50">
+                    return (
+                      <article
+                        key={key}
+                        className="rounded-2xl border border-white/10 bg-zinc-950/70 p-4 shadow-inner shadow-black/30"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-white leading-tight">
                               {customer.email ?? customer.guid ?? "Tanpa GUID"}
-                            </div>
-                            <div className="text-xs text-zinc-300">
+                            </p>
+                            <p className="text-xs text-zinc-400">
                               {customer.full_name ?? customer.username ?? customer.guid ?? contact}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-zinc-100 text-sm">{productsLabel}</td>
-                          <td className="px-4 py-3 text-sm">
-                            <div className="flex flex-col gap-1 text-zinc-100">
-                              <span
-                                className={
-                                  {
-                                    active: "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50",
-                                    idle: "inline-flex w-fit items-center gap-2 rounded-lg bg-amber-500/20 px-3 py-1 text-amber-100 ring-1 ring-amber-400/60",
-                                    pasif: "inline-flex w-fit items-center gap-2 rounded-lg bg-red-500/20 px-3 py-1 text-red-100 ring-1 ring-red-400/60",
-                                  }[customer.activity_status]
-                                }
-                              >
+                            </p>
+                          </div>
+                          {customer.guid ? (
+                            <a
+                              href={`/dashboard/user/${customer.guid}`}
+                              className="rounded-lg border border-white/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:border-zinc-200/70 hover:text-zinc-50"
+                            >
+                              Detail
+                            </a>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-3 space-y-2 text-sm text-zinc-200">
+                          <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Aplikasi</p>
+                            <p className="text-zinc-100">{productsLabel}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                              <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Activity</p>
+                              <span className={`mt-1 inline-flex w-fit items-center gap-2 rounded-lg px-3 py-1 text-xs font-semibold ${activityClass}`}>
                                 <span className="h-2 w-2 rounded-full bg-current" />
                                 {customer.activity_status === "active"
                                   ? "Active ( < 7 hari)"
@@ -552,66 +534,187 @@ function DashboardPageContent() {
                                     ? "Idle (7 - 30 hari)"
                                     : "Pasif ( > 30 hari)"}
                               </span>
-                              <span className="text-xs text-zinc-400">
-                                Terakhir menggunakan: {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
+                              <p className="mt-1 text-[11px] text-zinc-500">
+                                Terakhir menggunakan:{" "}
+                                {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-white/5 bg-white/5 px-3 py-2">
+                              <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Kuesioner</p>
+                              <span
+                                className={
+                                  customer.survey_completed
+                                    ? "mt-1 inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-xs font-semibold text-emerald-100 ring-1 ring-emerald-500/50"
+                                    : "mt-1 inline-flex w-fit items-center gap-2 rounded-lg bg-zinc-700/50 px-3 py-1 text-xs font-semibold text-zinc-100 ring-1 ring-white/10"
+                                }
+                              >
+                                <span
+                                  className={`h-2 w-2 rounded-full ${customer.survey_completed ? "bg-emerald-400" : "bg-zinc-400"}`}
+                                />
+                                {customer.survey_completed ? "Sudah isi" : "Belum isi"}
                               </span>
                             </div>
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            <span
-                              className={
-                                customer.survey_completed
-                                  ? "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50"
-                                  : "inline-flex w-fit items-center gap-2 rounded-lg bg-zinc-700/50 px-3 py-1 text-zinc-100 ring-1 ring-white/10"
-                              }
-                            >
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+\n              {/* Desktop table */}
+              <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/40 text-zinc-50 shadow-inner shadow-black/30 md:block hidden">
+                <table className="min-w-full divide-y divide-white/10 text-sm">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Nama / Email
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Aplikasi yang dipergunakan
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Activity
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Kuesioner
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10 bg-white/5 text-zinc-50">
+                    {campaignLoading && (
+                      <tr>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={5}>
+                          Memuat data campaign...
+                        </td>
+                      </tr>
+                    )}
+\n                    {!campaignLoading && customers.length === 0 && (
+                      <tr>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={5}>
+                          Belum ada customer untuk kode referral ini.
+                        </td>
+                      </tr>
+                    )}
+\n                    {!campaignLoading &&
+                      paginatedCustomers.map((customer, idx) => {
+                        const key = customer.guid ?? customer.email ?? customer.phone ?? `row-${idx}`;
+                        const contact = customer.email ?? customer.phone ?? "-";
+                        const productsLabel =
+                          customer.product_list && customer.product_list.length > 0
+                            ? customer.product_list
+                                .map((p) => {
+                                  const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
+                                  const exp = p.expired_at ? formatDate(p.expired_at) : "-";
+                                  return `${name} (exp ${exp})`;
+                                })
+                                .join(", ")
+                            : customer.subscribe_list.length > 0
+                              ? customer.subscribe_list.join(", ")
+                              : "-";
+                        return (
+                          <tr key={key} className="hover:bg-white/10">
+                            <td className="px-4 py-4">
+                              <div className="font-semibold text-zinc-50">
+                                {customer.email ?? customer.guid ?? "Tanpa GUID"}
+                              </div>
+                              <div className="text-xs text-zinc-300">
+                                {customer.full_name ?? customer.username ?? customer.guid ?? contact}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-zinc-100 text-sm">{productsLabel}</td>
+                            <td className="px-4 py-3 text-sm">
+                              <div className="flex flex-col gap-1 text-zinc-100">
+                                <span
+                                  className={
+                                    {
+                                      active: "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50",
+                                      idle: "inline-flex w-fit items-center gap-2 rounded-lg bg-amber-500/20 px-3 py-1 text-amber-100 ring-1 ring-amber-400/60",
+                                      pasif: "inline-flex w-fit items-center gap-2 rounded-lg bg-red-500/20 px-3 py-1 text-red-100 ring-1 ring-red-400/60",
+                                    }[customer.activity_status]
+                                  }
+                                >
+                                  <span className="h-2 w-2 rounded-full bg-current" />
+                                  {customer.activity_status === "active"
+                                    ? "Active ( < 7 hari)"
+                                    : customer.activity_status === "idle"
+                                      ? "Idle (7 - 30 hari)"
+                                      : "Pasif ( > 30 hari)"}
+                                </span>
+                                <span className="text-xs text-zinc-400">
+                                  Terakhir menggunakan: {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-sm">
                               <span
-                                className={`h-2 w-2 rounded-full ${customer.survey_completed ? "bg-emerald-400" : "bg-zinc-400"}`}
-                              />
-                              {customer.survey_completed ? "Sudah isi" : "Belum isi"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            {customer.guid ? (
-                              <a
-                                href={`/dashboard/user/${customer.guid}`}
-                                className="inline-flex items-center rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition hover:border-zinc-200/70 hover:text-zinc-50"
+                                className={
+                                  customer.survey_completed
+                                    ? "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50"
+                                    : "inline-flex w-fit items-center gap-2 rounded-lg bg-zinc-700/50 px-3 py-1 text-zinc-100 ring-1 ring-white/10"
+                                }
                               >
-                                Detail
-                              </a>
-                            ) : (
-                              <span className="text-xs text-zinc-400">-</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-
-              <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-4 py-3 text-xs text-zinc-200">
-                <span>
-                  Halaman {currentPage} dari {totalPages} - Menampilkan{" "}
-                  {Math.min((currentPage - 1) * PAGE_SIZE + 1, totalCustomers)}-
-                  {Math.min(currentPage * PAGE_SIZE, totalCustomers)} dari {totalCustomers}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    disabled={currentPage === 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-zinc-200/70 hover:text-zinc-50"
-                  >
-                    Prev
-                  </button>
-                  <button
-                    disabled={currentPage === totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-zinc-200/70 hover:text-zinc-50"
-                  >
-                    Next
-                  </button>
+                                <span
+                                  className={`h-2 w-2 rounded-full ${customer.survey_completed ? "bg-emerald-400" : "bg-zinc-400"}`}
+                                />
+                                {customer.survey_completed ? "Sudah isi" : "Belum isi"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {customer.guid ? (
+                                <a
+                                  href={`/dashboard/user/${customer.guid}`}
+                                  className="inline-flex items-center rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition hover:border-zinc-200/70 hover:text-zinc-50"
+                                >
+                                  Detail
+                                </a>
+                              ) : (
+                                <span className="text-xs text-zinc-400">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+\n                <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-4 py-3 text-xs text-zinc-200">
+                  <span>
+                    Halaman {currentPage} dari {totalPages} - Menampilkan{" "}
+                    {Math.min((currentPage - 1) * PAGE_SIZE + 1, totalCustomers)}-
+                    {Math.min(currentPage * PAGE_SIZE, totalCustomers)} dari {totalCustomers}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-zinc-200/70 hover:text-zinc-50"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      disabled={currentPage === totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      className="rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 hover:border-zinc-200/70 hover:text-zinc-50"
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {!campaignLoading && customers.length === 0 && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-zinc-200 md:hidden">
+                  Belum ada customer untuk kode referral ini.
+                </div>
+              )}
+
+              {campaignLoading && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-zinc-200 md:hidden">
+                  Memuat data campaign...
+                </div>
+              )}
             </div>
           </section>
         </>
