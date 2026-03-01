@@ -8,6 +8,7 @@ const supabase = createClient(
 );
 
 const SURVEY_TITLE = "Baseline UMKM Feb 2026";
+const SURVEY_ID_OVERRIDE = process.env.NEXT_PUBLIC_BASELINE_SURVEY_ID;
 
 export type Profile = {
   id: string;
@@ -196,27 +197,46 @@ export async function getSurveyAnswersByGuid(guid: string): Promise<SurveyAnswer
     appUserId = userByPhone?.id ?? null;
   }
 
-  if (!appUserId) return null;
+  // optional: pelanggan dari jalur publik mungkin tidak punya app_user
 
   // 3) Cari survey baseline
   const surveyId = await resolveBaselineSurveyId();
   if (!surveyId) return null;
 
-  // 4) Ambil response untuk user ini (harus unik per survey)
-  const { data: responseRow, error: respErr } = await supabase
-    .from("survey_responses")
-    .select("id")
-    .eq("survey_id", surveyId)
-    .eq("user_id", appUserId)
-    .order("submitted_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // 4) Ambil response: prioritaskan user_id, lalu fallback customer_guid
+  let responseId: string | undefined;
+  if (appUserId) {
+    const { data: responseRow, error: respErr } = await supabase
+      .from("survey_responses")
+      .select("id")
+      .eq("survey_id", surveyId)
+      .eq("user_id", appUserId)
+      .order("submitted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (respErr) {
-    throw new Error(`Failed to fetch survey response: ${respErr.message}`);
+    if (respErr) {
+      throw new Error(`Failed to fetch survey response: ${respErr.message}`);
+    }
+    responseId = responseRow?.id as string | undefined;
   }
 
-  const responseId = responseRow?.id as string | undefined;
+  if (!responseId) {
+    const { data: responseRow, error: respErr } = await supabase
+      .from("survey_responses")
+      .select("id")
+      .eq("survey_id", surveyId)
+      .eq("customer_guid", guid)
+      .order("submitted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (respErr) {
+      throw new Error(`Failed to fetch survey response by customer: ${respErr.message}`);
+    }
+    responseId = responseRow?.id as string | undefined;
+  }
+
   if (!responseId) return [];
 
   // 5) Ambil questions dan answers
@@ -269,6 +289,7 @@ export async function getSurveyAnswersByGuid(guid: string): Promise<SurveyAnswer
 }
 
 const resolveBaselineSurveyId = async (): Promise<string | null> => {
+  if (SURVEY_ID_OVERRIDE) return SURVEY_ID_OVERRIDE;
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
     .select("id, title")

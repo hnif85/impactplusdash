@@ -68,6 +68,8 @@ Telepon/WA: ${body.profile?.phone ?? "-"}
 
 Data kuesioner:
 ${formatted}
+
+format output berupa narasi, bukan daftar dengan data yang lengkap. Jangan buat kesimpulan atau rekomendasi, cukup rangkum data di atas dengan gaya bahasa yang menarik dan mudah dipahami.
 `;
 
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {

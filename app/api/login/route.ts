@@ -14,19 +14,38 @@ const TOKEN_TTL = "12h";
 
 export async function POST(req: Request) {
   try {
-    const { email, password } = await req.json();
+    const { email, username, identifier, password } = await req.json();
 
-    if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
+    const loginIdentifier = (identifier ?? username ?? email)?.trim();
+
+    if (!loginIdentifier || !password) {
+      return NextResponse.json(
+        { error: "Identifier (email/username) and password are required." },
+        { status: 400 }
+      );
     }
 
-    const { data: user, error } = await supabase
+    const selectFields =
+      "id, email, username, full_name, role, company_id, password_hash, is_active";
+
+    // Try email first for backwards compatibility; fallback to username.
+    const { data: userByEmail, error: emailError } = await supabase
       .from("dashboard_users")
-      .select("id, email, full_name, role, company_id, password_hash, is_active")
-      .eq("email", email)
+      .select(selectFields)
+      .eq("email", loginIdentifier)
       .maybeSingle();
 
-    if (error) {
+    const { data: userByUsername, error: usernameError } = userByEmail
+      ? { data: null, error: null }
+      : await supabase
+          .from("dashboard_users")
+          .select(selectFields)
+          .eq("username", loginIdentifier)
+          .maybeSingle();
+
+    const user = userByEmail ?? userByUsername;
+
+    if (emailError || usernameError) {
       return NextResponse.json({ error: "Login failed." }, { status: 400 });
     }
 
@@ -74,6 +93,7 @@ export async function POST(req: Request) {
       user: {
         id: user.id,
         email: user.email,
+        username: user.username,
         full_name: user.full_name,
         role: user.role,
         company_id: user.company_id,

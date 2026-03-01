@@ -186,6 +186,7 @@ CREATE TABLE public.dashboard_activity_logs (
 );
 CREATE TABLE public.dashboard_users (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  username character varying UNIQUE,
   email character varying NOT NULL UNIQUE,
   password_hash character varying NOT NULL,
   full_name character varying,

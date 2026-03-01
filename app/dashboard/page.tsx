@@ -475,11 +475,11 @@ function DashboardPageContent() {
                 <div className="grid gap-3 md:hidden">
                   {paginatedCustomers.map((customer, idx) => {
                     const key = customer.guid ?? customer.email ?? customer.phone ?? `card-${idx}`;
-                    const contact = customer.email ?? customer.phone ?? "-";
-                    const productsLabel =
-                      customer.product_list && customer.product_list.length > 0
-                        ? customer.product_list
-                            .map((p) => {
+                        const contact = customer.email ?? customer.phone ?? "-";
+                        const productsLabel =
+                          customer.product_list && customer.product_list.length > 0
+                            ? customer.product_list
+                                .map((p) => {
                               const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
                               const exp = p.expired_at ? formatDate(p.expired_at) : "-";
                               return `${name} (exp ${exp})`;
@@ -507,6 +507,9 @@ function DashboardPageContent() {
                             <p className="text-xs text-zinc-400">
                               {customer.full_name ?? customer.username ?? customer.guid ?? contact}
                             </p>
+                            {customer.phone ? (
+                              <p className="text-xs text-zinc-400">Telepon: {customer.phone}</p>
+                            ) : null}
                           </div>
                           {customer.guid ? (
                             <a
@@ -570,6 +573,9 @@ function DashboardPageContent() {
                         Nama / Email
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Telepon
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
                         Aplikasi yang dipergunakan
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
@@ -586,14 +592,14 @@ function DashboardPageContent() {
                   <tbody className="divide-y divide-white/10 bg-white/5 text-zinc-50">
                     {campaignLoading && (
                       <tr>
-                        <td className="px-4 py-4 text-zinc-200" colSpan={5}>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={6}>
                           Memuat data campaign...
                         </td>
                       </tr>
                     )}
                     {!campaignLoading && customers.length === 0 && (
                       <tr>
-                        <td className="px-4 py-4 text-zinc-200" colSpan={5}>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={6}>
                           Belum ada customer untuk kode referral ini.
                         </td>
                       </tr>
@@ -602,6 +608,7 @@ function DashboardPageContent() {
                       paginatedCustomers.map((customer, idx) => {
                         const key = customer.guid ?? customer.email ?? customer.phone ?? `row-${idx}`;
                         const contact = customer.email ?? customer.phone ?? "-";
+                        const phoneLabel = customer.phone ?? "-";
                         const productsLabel =
                           customer.product_list && customer.product_list.length > 0
                             ? customer.product_list
@@ -624,6 +631,7 @@ function DashboardPageContent() {
                                 {customer.full_name ?? customer.username ?? customer.guid ?? contact}
                               </div>
                             </td>
+                            <td className="px-4 py-3 text-sm text-zinc-100">{phoneLabel}</td>
                             <td className="px-4 py-3 text-zinc-100 text-sm">{productsLabel}</td>
                             <td className="px-4 py-3 text-sm">
                               <div className="flex flex-col gap-1 text-zinc-100">

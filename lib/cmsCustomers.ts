@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const PRODUCT_NAME = "AI untuk UMKM";
 const CAMPAIGN_REFERRAL_CODE = "CB6aXl";
+const BASELINE_SURVEY_ID = process.env.NEXT_PUBLIC_BASELINE_SURVEY_ID;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -64,6 +65,8 @@ export type CampaignResult = {
   summary: CampaignSummary;
   companyName?: string | null;
   surveySummary?: SurveySummary | null;
+  surveyId?: string | null;
+  referralCode?: string | null;
 };
 
 export type SurveySummary = {
@@ -302,6 +305,7 @@ const toOptionsArray = (value: unknown): string[] => {
 };
 
 const resolveBaselineSurveyId = async (): Promise<string | null> => {
+  if (BASELINE_SURVEY_ID) return BASELINE_SURVEY_ID;
   // Cari survey berdasarkan judul tetap; fallback ke survey aktif terbaru jika tidak ada.
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
@@ -348,20 +352,7 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
     throw new Error(`Gagal memuat responses: ${responseErr.message}`);
   }
 
-  let responses = responsesFiltered ?? [];
-
-  // Jika filter company membuat kosong, coba ambil keseluruhan supaya tetap ada ringkasan.
-  if (companyId && responses.length === 0) {
-    const { data: fallbackResponses, error: fallbackErr } = await supabase
-      .from("survey_responses")
-      .select("id, completion_time_seconds")
-      .eq("survey_id", surveyId);
-
-    if (fallbackErr) {
-      throw new Error(`Gagal memuat responses umum: ${fallbackErr.message}`);
-    }
-    responses = fallbackResponses ?? [];
-  }
+  const responses = responsesFiltered ?? [];
 
   if (!responses || responses.length === 0) return null;
 
@@ -515,18 +506,20 @@ export async function getCampaignDashboard(
   productName: string = PRODUCT_NAME
 ): Promise<CampaignResult> {
   const targetProductKey = normalizeName(productName);
+  const baselineSurveyId = await resolveBaselineSurveyId();
 
   let companyName: string | null | undefined = null;
   const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, name")
     .eq("metadata->>referral_code", referralCode)
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (companyError) {
     throw new Error(`Failed to lookup company for referral code: ${companyError.message}`);
   }
-
   companyName = company?.name ?? null;
 
   const { data: excludedEmailsData, error: excludedError } = await supabase
@@ -562,6 +555,7 @@ export async function getCampaignDashboard(
   // Siapkan lookup app_users berdasarkan email/telepon untuk status kuesioner.
   const emailLookup = new Map<string, string>();
   const phoneLookup = new Map<string, string>();
+  const appUserPhoneById = new Map<string, string | null>();
   const emailList = Array.from(
     new Set(
       cohort
@@ -580,7 +574,7 @@ export async function getCampaignDashboard(
   if (emailList.length > 0) {
     const { data, error } = await supabase
       .from("app_users")
-      .select("id, email")
+      .select("id, email, phone")
       .in("email", emailList);
 
     if (error) {
@@ -589,7 +583,9 @@ export async function getCampaignDashboard(
 
     (data ?? []).forEach((row) => {
       const key = normalizeEmail(row.email as string | null | undefined);
-      if (key) emailLookup.set(key, row.id as string);
+      const id = row.id as string | null;
+      if (key && id) emailLookup.set(key, id);
+      if (id) appUserPhoneById.set(id, (row.phone as string | null | undefined) ?? null);
     });
   }
 
@@ -605,7 +601,9 @@ export async function getCampaignDashboard(
 
     (data ?? []).forEach((row) => {
       const key = normalizePhone(row.phone as string | null | undefined);
-      if (key) phoneLookup.set(key, row.id as string);
+      const id = row.id as string | null;
+      if (key && id) phoneLookup.set(key, id);
+      if (id) appUserPhoneById.set(id, (row.phone as string | null | undefined) ?? null);
     });
   }
 
@@ -691,25 +689,102 @@ export async function getCampaignDashboard(
     }
   }
 
-  let surveyRespondents = new Set<string>();
-  if (appUserIds.size > 0) {
-    const surveyId = await resolveBaselineSurveyId();
-    if (surveyId) {
-      const { data: responses, error: responseErr } = await supabase
-        .from("survey_responses")
-        .select("user_id")
-        .eq("survey_id", surveyId)
-        .in("user_id", Array.from(appUserIds));
+  const surveyRespondents = new Set<string>();
+  const responseIdByUserId = new Map<string, string>();
+  const responseIdByCustomerGuid = new Map<string, string>();
 
+  if (baselineSurveyId) {
+    const responsePromises = [];
+
+    if (appUserIds.size > 0) {
+      responsePromises.push(
+        supabase
+          .from("survey_responses")
+          .select("id, user_id")
+          .eq("survey_id", baselineSurveyId)
+          .in("user_id", Array.from(appUserIds))
+      );
+    }
+
+    const cohortGuidsForSurvey = Array.from(uniqueGuids);
+    if (cohortGuidsForSurvey.length > 0) {
+      responsePromises.push(
+        supabase
+          .from("survey_responses")
+          .select("id, customer_guid")
+          .eq("survey_id", baselineSurveyId)
+          .in("customer_guid", cohortGuidsForSurvey)
+      );
+    }
+
+    if (responsePromises.length > 0) {
+      const responseResults = await Promise.all(responsePromises);
+      const responseErr = responseResults.find((r) => r.error)?.error;
       if (responseErr) {
         throw new Error(`Failed to load survey responses: ${responseErr.message}`);
       }
 
-      surveyRespondents = new Set(
-        (responses ?? [])
-          .map((row) => row.user_id as string | null)
-          .filter((v): v is string => Boolean(v))
-      );
+      for (const res of responseResults) {
+        for (const row of (res.data as any[] | null | undefined) ?? []) {
+          const id = row.id as string | null;
+          const userId = row.user_id as string | null;
+          const customerGuid = row.customer_guid as string | null;
+
+          if (userId) {
+            surveyRespondents.add(userId);
+            if (id) responseIdByUserId.set(userId, id);
+          }
+
+          if (customerGuid) {
+            surveyRespondents.add(customerGuid);
+            if (id) responseIdByCustomerGuid.set(customerGuid, id);
+          }
+        }
+      }
+    }
+  }
+
+  const surveyPhoneByUserId = new Map<string, string | null>();
+  const surveyPhoneByResponseId = new Map<string, string | null>();
+
+  if (company?.id && baselineSurveyId && (appUserIds.size > 0 || responseIdByCustomerGuid.size > 0)) {
+    const orFilters: string[] = [];
+    const formatIn = (values: string[]) => values.join(",");
+
+    if (appUserIds.size > 0) {
+      orFilters.push(`app_user_id.in.(${formatIn(Array.from(appUserIds))})`);
+    }
+
+    const responseIdsCombined = Array.from(
+      new Set([
+        ...Array.from(responseIdByUserId.values()),
+        ...Array.from(responseIdByCustomerGuid.values()),
+      ])
+    );
+
+    if (responseIdsCombined.length > 0) {
+      orFilters.push(`source_response_id.in.(${formatIn(responseIdsCombined)})`);
+    }
+
+    if (orFilters.length > 0) {
+      const { data: baselineProfiles, error: baselineErr } = await supabase
+        .from("baseline_umkm_profiles")
+        .select("app_user_id, source_response_id, whatsapp")
+        .eq("company_id", company.id)
+        .or(orFilters.join(","));
+
+      if (baselineErr) {
+        throw new Error(`Failed to load survey phone data: ${baselineErr.message}`);
+      }
+
+      for (const row of baselineProfiles ?? []) {
+        const appUserId = row.app_user_id as string | null;
+        const responseId = row.source_response_id as string | null;
+        const wa = row.whatsapp as string | null;
+
+        if (appUserId) surveyPhoneByUserId.set(appUserId, wa);
+        if (responseId) surveyPhoneByResponseId.set(responseId, wa);
+      }
     }
   }
 
@@ -721,13 +796,28 @@ export async function getCampaignDashboard(
     const appUserId =
       (emailKey ? emailLookup.get(emailKey) : undefined) ??
       (phoneKey ? phoneLookup.get(phoneKey) : undefined);
-    const surveyCompleted = appUserId ? surveyRespondents.has(appUserId) : false;
+    const surveyCompleted =
+      (appUserId && surveyRespondents.has(appUserId)) ||
+      (customer.guid ? surveyRespondents.has(customer.guid) : false);
+
+    const responseId =
+      (appUserId ? responseIdByUserId.get(appUserId) : undefined) ??
+      (customer.guid ? responseIdByCustomerGuid.get(customer.guid) : undefined);
+
+    const surveyPhone =
+      (appUserId ? surveyPhoneByUserId.get(appUserId) : undefined) ??
+      (responseId ? surveyPhoneByResponseId.get(responseId) : undefined) ??
+      null;
+
+    const appUserPhone = appUserId ? appUserPhoneById.get(appUserId) ?? null : null;
+    const resolvedPhone = customer.phone ?? surveyPhone ?? appUserPhone ?? null;
 
     return {
       ...customer,
       activity_status: activity,
       last_debit_usage: lastUsage,
       survey_completed: surveyCompleted,
+      phone: resolvedPhone,
     };
   });
 
@@ -744,5 +834,7 @@ export async function getCampaignDashboard(
     },
     companyName,
     surveySummary,
+    surveyId: baselineSurveyId,
+    referralCode,
   };
 }

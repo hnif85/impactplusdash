@@ -27,6 +27,7 @@ export function canAccess(role: DashboardRole, resource: string): boolean {
 export interface DashboardUserProfile {
   id: string;
   email: string;
+  username?: string | null;
   full_name: string | null;
   role: DashboardRole;
   company_id: string | null;

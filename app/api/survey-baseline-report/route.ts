@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SURVEY_TITLE = "Baseline UMKM Feb 2026";
 const MAX_RESPONSES = 400; // batasi feed ke AI agar prompt tidak bengkak
+const SURVEY_ID_OVERRIDE = process.env.NEXT_PUBLIC_BASELINE_SURVEY_ID;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,6 +41,7 @@ const toOptionsArray = (value: unknown): string[] => {
 };
 
 async function fetchSurveyId() {
+  if (SURVEY_ID_OVERRIDE) return SURVEY_ID_OVERRIDE;
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
     .select("id")

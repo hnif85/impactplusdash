@@ -91,6 +91,10 @@ function SurveyInsightsContent() {
   const [report, setReport] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareSurveyId, setShareSurveyId] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [referralCode, setReferralCode] = useState(DEFAULT_CAMPAIGN_CODE);
 
   useEffect(() => {
     const load = async () => {
@@ -120,7 +124,9 @@ function SurveyInsightsContent() {
         }
 
         const data = (await res.json()) as { surveySummary?: SurveySummary | null };
-        setSummary(data.surveySummary ?? null);
+        setSummary((data as any).surveySummary ?? null);
+        setShareSurveyId((data as any).surveyId ?? "");
+        setReferralCode(referral);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Kesalahan tak terduga.");
       } finally {
@@ -158,8 +164,73 @@ function SurveyInsightsContent() {
 
   if (!summary) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-10 text-sm text-zinc-400">
-        Ringkasan survey belum tersedia.
+      <div
+        className="min-h-screen w-full"
+        style={{ background: palette.bg, color: palette.text, fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif" }}
+      >
+        <div className="mx-auto max-w-8xl px-4 py-8">
+          <header className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em]" style={{ color: palette.accent }}>
+                Insights Survey
+              </p>
+              <p className="text-sm text-zinc-400">Belum ada data survey untuk referral ini.</p>
+            </div>
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setShareOpen((v) => !v)}
+                  className="rounded-lg border px-4 py-2 text-[12px] font-semibold text-white transition hover:border-emerald-500 hover:text-emerald-300"
+                  style={{ borderColor: palette.border, background: palette.surface2 }}
+                >
+                  ?? Share Survey
+                </button>
+              </div>
+              {shareOpen && (
+                <div
+                  className="w-[320px] rounded-2xl p-4 text-[12.5px]"
+                  style={{ background: palette.surface2, border: `1px solid ${palette.border}` }}
+                >
+                  <p className="mb-2 font-semibold text-white">Link publik survey</p>
+                  <label className="mb-2 block text-[11px] uppercase tracking-[0.08em]" style={{ color: palette.dim }}>
+                    Survey ID
+                  </label>
+                  <input
+                    value={shareSurveyId}
+                    onChange={(e) => setShareSurveyId(e.target.value)}
+                    placeholder="uuid survey"
+                    className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12.5px] text-white outline-none focus:border-emerald-500"
+                  />
+                  <label className="mb-2 block text-[11px] uppercase tracking-[0.08em]" style={{ color: palette.dim }}>
+                    Referral code
+                  </label>
+                  <input
+                    value={referralCode}
+                    disabled
+                    className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12.5px] text-white opacity-80"
+                    readOnly
+                  />
+                  <ShareLinkRow
+                    surveyId={shareSurveyId.trim()}
+                    referral={referralCode}
+                    onCopy={() => {
+                      const url = buildShareUrl(shareSurveyId.trim(), referralCode);
+                      if (!url) return;
+                      navigator.clipboard.writeText(url).then(() => {
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1500);
+                      });
+                    }}
+                    copied={copied}
+                  />
+                </div>
+              )}
+            </div>
+          </header>
+          <div className="rounded-2xl border border-dashed border-zinc-700 bg-zinc-900/40 p-8 text-sm text-zinc-400">
+            Ringkasan survey belum tersedia untuk referral ini. Gunakan tombol Share di kanan atas untuk mengirim link survei publik.
+          </div>
+        </div>
       </div>
     );
   }
@@ -192,12 +263,62 @@ function SurveyInsightsContent() {
             </p>
             
           </div>
-          <div
-            className="flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium"
-            style={{ background: palette.surface2, border: `1px solid ${palette.border}`, color: palette.muted }}
-          >
-            {summary.totalRespondents.toLocaleString("id-ID")} responden •
-            <span style={{ color: palette.accent }}> NPS {summary.nps >= 0 ? `+${summary.nps}` : summary.nps}</span>
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setShareOpen((v) => !v)}
+                className="rounded-lg border px-4 py-2 text-[12px] font-semibold text-white transition hover:border-emerald-500 hover:text-emerald-300"
+                style={{ borderColor: palette.border, background: palette.surface2 }}
+              >
+                🔗 Share Survey
+              </button>
+              <div
+                className="flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium"
+                style={{ background: palette.surface2, border: `1px solid ${palette.border}`, color: palette.muted }}
+              >
+                {summary.totalRespondents.toLocaleString("id-ID")} responden
+                <span style={{ color: palette.accent }}> NPS {summary.nps >= 0 ? `+${summary.nps}` : summary.nps}</span>
+              </div>
+            </div>
+            {shareOpen && (
+              <div
+                className="w-[320px] rounded-2xl p-4 text-[12.5px]"
+                style={{ background: palette.surface2, border: `1px solid ${palette.border}` }}
+              >
+                <p className="mb-2 font-semibold text-white">Link publik survey</p>
+                <label className="mb-2 block text-[11px] uppercase tracking-[0.08em]" style={{ color: palette.dim }}>
+                  Survey ID
+                </label>
+                <input
+                  value={shareSurveyId}
+                  onChange={(e) => setShareSurveyId(e.target.value)}
+                  placeholder="uuid survey"
+                  className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12.5px] text-white outline-none focus:border-emerald-500"
+                />
+                <label className="mb-2 block text-[11px] uppercase tracking-[0.08em]" style={{ color: palette.dim }}>
+                  Referral code
+                </label>
+                <input
+                  value={referralCode}
+                  disabled
+                  className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12.5px] text-white opacity-80"
+                  readOnly
+                />
+                <ShareLinkRow
+                  surveyId={shareSurveyId.trim()}
+                  referral={referralCode}
+                  onCopy={() => {
+                    const url = buildShareUrl(shareSurveyId.trim(), referralCode);
+                    if (!url) return;
+                    navigator.clipboard.writeText(url).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    });
+                  }}
+                  copied={copied}
+                />
+              </div>
+            )}
           </div>
         </header>
 
@@ -358,7 +479,7 @@ function SurveyInsightsContent() {
                 className="w-full rounded-lg px-4 py-3 text-[13px] font-semibold text-black shadow transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ background: "linear-gradient(135deg, #00d084, #00a86b)" }}
               >
-                {reportLoading ? "Memproses..." : "⚡ Generate Laporan AI"}
+                {reportLoading ? "Memproses..." : "? Generate Laporan AI"}
               </button>
               <div
                 className="min-h-[220px] rounded-lg p-4 text-[12.5px]"
@@ -471,3 +592,42 @@ function EmptyState({ text }: { text: string }) {
     </div>
   );
 }
+
+function buildShareUrl(surveyId: string, referral: string) {
+  if (!surveyId || !referral) return "";
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3001";
+  return `${origin}/survey/${surveyId}?ref=${encodeURIComponent(referral)}`;
+}
+
+function ShareLinkRow({
+  surveyId,
+  referral,
+  onCopy,
+  copied,
+}: {
+  surveyId: string;
+  referral: string;
+  onCopy: () => void;
+  copied: boolean;
+}) {
+  const url = buildShareUrl(surveyId, referral);
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        value={url}
+        readOnly
+        placeholder="Lengkapi survey id..."
+        className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[12.5px] text-white"
+      />
+      <button
+        onClick={onCopy}
+        disabled={!url}
+        className="rounded-lg bg-emerald-500 px-3 py-2 text-[12px] font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {copied ? "Tersalin" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+

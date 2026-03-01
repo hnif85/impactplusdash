@@ -6,6 +6,7 @@ node_modules/
 /out/
 /build/
 dist/
+.turbo/
 
 # Package managers
 .npm/
@@ -50,13 +51,19 @@ Thumbs.db
 # Miscellaneous
 .vercel
 *.pem
-node_modules
 
 plans/
 supabase/
-  .branches
-  .temp
-  .logs
-  .env
 
+*.tmp
+patch.tmp
 *.txt
+schema.sql
+lib/cmsCustomers.ts
+schema.sql
+
+*.csv
+docs/
+
+*.md
+

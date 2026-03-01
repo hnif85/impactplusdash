@@ -3,8 +3,8 @@
 Panduan singkat menyiapkan email dan password untuk mengakses dashboard.
 
 ## Cara kerja otentikasi
-- Form login mengirim `email` dan `password` ke `/api/login`.
-- Backend mencari pengguna di tabel Supabase `dashboard_users` dan mencocokkan `password` dengan `password_hash` (bcrypt).
+- Form login mengirim `identifier` (email atau username) dan `password` ke `/api/login`.
+- Backend mencari pengguna di tabel Supabase `dashboard_users` menggunakan `email` lalu fallback ke `username`, lalu mencocokkan `password` dengan `password_hash` (bcrypt).
 - Token JWT disimpan di `localStorage` (`ip_token`), lalu pengguna diarahkan ke `/dashboard`.
 
 ## Prasyarat
@@ -18,10 +18,11 @@ node -e "console.log(require('bcryptjs').hashSync('adminimpact', 10))"
 ```
 2) Masukkan record ke tabel `dashboard_users` (via SQL editor atau Table view):
 ```sql
-insert into dashboard_users (id, email, full_name, role, company_id, password_hash, is_active)
+insert into dashboard_users (id, email, username, full_name, role, company_id, password_hash, is_active)
 values (
   gen_random_uuid(),                  -- atau UUID lain
   'admin@example.com',                -- email login
+  'admin',                            -- username login (unik)
   'Admin Impact Plus',                -- nama tampilan
   'super_admin',                      -- atau 'company_admin'
   null,                               -- isi dengan UUID perusahaan jika perlu

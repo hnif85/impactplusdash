@@ -11,20 +11,17 @@ interface AuthState {
 }
 
 const fields = [
-  { name: "email", label: "Email", type: "email", placeholder: "admin@company.com" },
+  { name: "identifier", label: "Email atau Username", type: "text", placeholder: "admin or admin@company.com" },
   { name: "password", label: "Password", type: "password", placeholder: "********" },
 ] as const;
 
 export default function LoginPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ email: "", password: "" });
+  const [form, setForm] = useState({ identifier: "", password: "" });
   const [authState, setAuthState] = useState<AuthState>({ loading: false, error: null });
   const [profile, setProfile] = useState<DashboardUserProfile | null>(null);
 
-  const formValid = useMemo(
-    () => form.email.trim() !== "" && form.password.length > 0,
-    [form]
-  );
+  const formValid = useMemo(() => form.identifier.trim() !== "" && form.password.length > 0, [form]);
 
   useEffect(() => {
     // If token already in localStorage, go to dashboard.
@@ -48,7 +45,7 @@ export default function LoginPage() {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: form.email.trim(), password: form.password }),
+        body: JSON.stringify({ identifier: form.identifier.trim(), password: form.password }),
       });
 
       const json = await res.json();
