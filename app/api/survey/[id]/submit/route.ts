@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   ensureSurveyActive,
@@ -25,12 +25,12 @@ const bodySchema = z.object({
   answers: z.array(answerSchema).min(1),
 });
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const json = await req.json();
     const { customerGuid, referralCode, answers } = bodySchema.parse(json);
 
-    const surveyId = params?.id;
+    const { id: surveyId } = await params;
     if (!surveyId || !isUuid(surveyId)) {
       return NextResponse.json({ error: "Survey id invalid." }, { status: 400 });
     }
