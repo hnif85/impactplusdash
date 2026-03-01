@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ensureSurveyActive, fetchQuestions, getCompanyByReferralCode } from "@/lib/surveyPublic";
 
@@ -8,9 +8,9 @@ const querySchema = z.object({
   ref: z.string().min(1, "referral code required"),
 });
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const surveyId = params?.id;
+    const { id: surveyId } = await params;
     if (!surveyId || !isUuid(surveyId)) {
       return NextResponse.json({ error: "Survey id invalid." }, { status: 400 });
     }
