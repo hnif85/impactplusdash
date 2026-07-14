@@ -15,20 +15,27 @@ type ParticipantRow = {
   pre: number | null;
   post: number | null;
   delta: number | null;
-  quiz_pct: number | null;
-  quiz_correct: number | null;
+  quiz_pre: { pct: number; correct: number } | null;
+  quiz_post: { pct: number; correct: number } | null;
+  quiz_delta: number | null;
 };
 
-type SurveyMeta = { pre: string | null; post: string | null; quiz: string | null };
+type SurveyMeta = { pre: string | null; post: string | null; quiz: string | null; quiz_post: string | null };
+
+type QuizSide = {
+  answered: number;
+  correct: number;
+  pct: number;
+  options: { label: string; count: number; pct: number; is_correct: boolean }[];
+};
 
 type QuizQuestion = {
   order_index: number;
   text: string;
   correct_answer: string;
-  answered: number;
-  correct: number;
-  pct: number;
-  options: { label: string; count: number; pct: number; is_correct: boolean }[];
+  pre: QuizSide | null;
+  post: QuizSide | null;
+  delta: number | null;
 };
 
 // Data encoding, not chrome: correct is the point, distractors are context.
@@ -43,7 +50,7 @@ export default function EventDetailPage() {
 
   const [token, setToken] = useState<string | null>(null);
   const [rows, setRows] = useState<ParticipantRow[]>([]);
-  const [surveyMeta, setSurveyMeta] = useState<SurveyMeta>({ pre: null, post: null, quiz: null });
+  const [surveyMeta, setSurveyMeta] = useState<SurveyMeta>({ pre: null, post: null, quiz: null, quiz_post: null });
   const [quizTotal, setQuizTotal] = useState(0);
   const [quizBreakdown, setQuizBreakdown] = useState<QuizQuestion[]>([]);
   const [links, setLinks] = useState<{
@@ -74,7 +81,7 @@ export default function EventDetailPage() {
         if (!res.ok) throw new Error("Gagal memuat data peserta.");
         const data = await res.json();
         setRows(data.attendance ?? []);
-        setSurveyMeta(data.survey_meta ?? { pre: null, post: null, quiz: null });
+        setSurveyMeta(data.survey_meta ?? { pre: null, post: null, quiz: null, quiz_post: null });
         setQuizTotal(data.quiz_total ?? 0);
         setQuizBreakdown(data.quiz_breakdown ?? []);
         setLinks(data.links ?? { event_post: null, event_post_title: null, program_post: null });
@@ -239,7 +246,7 @@ export default function EventDetailPage() {
                     <td className="px-4 py-3 text-right"><Score value={r.pre} /></td>
                     <td className="px-4 py-3 text-right"><Score value={r.post} /></td>
                     <td className="px-4 py-3 text-right"><Delta value={r.delta} /></td>
-                    <td className="px-4 py-3 text-right"><Quiz pct={r.quiz_pct} correct={r.quiz_correct} total={quizTotal} /></td>
+                    <td className="px-4 py-3 text-right"><Quiz row={r} total={quizTotal} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -261,7 +268,7 @@ export default function EventDetailPage() {
                   <MiniStat label="Pre"><Score value={r.pre} /></MiniStat>
                   <MiniStat label="Post"><Score value={r.post} /></MiniStat>
                   <MiniStat label="Δ"><Delta value={r.delta} /></MiniStat>
-                  <MiniStat label="Kuis"><Quiz pct={r.quiz_pct} correct={r.quiz_correct} total={quizTotal} /></MiniStat>
+                  <MiniStat label="Kuis"><Quiz row={r} total={quizTotal} /></MiniStat>
                 </div>
               </article>
             ))}
@@ -269,7 +276,7 @@ export default function EventDetailPage() {
         </>
       )}
 
-      {quizBreakdown.length > 0 && <QuizAnalysis questions={quizBreakdown} title={surveyMeta.quiz} />}
+      {quizBreakdown.length > 0 && <QuizAnalysis questions={quizBreakdown} meta={surveyMeta} />}
     </div>
   );
 }
@@ -278,66 +285,78 @@ export default function EventDetailPage() {
  * Which material didn't land. Sorted hardest-first by the API, so the questions
  * that need re-teaching are what you see without scrolling.
  */
-function QuizAnalysis({ questions, title }: { questions: QuizQuestion[]; title: string | null }) {
+function QuizAnalysis({ questions, meta }: { questions: QuizQuestion[]; meta: SurveyMeta }) {
   const [open, setOpen] = useState<number | null>(null);
+  const hasPost = questions.some((q) => q.post);
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-sm font-semibold text-white">Analisis Kuis</h3>
-        <span className="text-[11px] text-zinc-500">tersulit di atas</span>
+        <span className="text-[11px] text-zinc-500">
+          {hasPost ? "yang masih lemah di atas" : "tersulit di atas"}
+        </span>
       </div>
-      <p className="mb-4 text-xs text-zinc-500">{title ?? "Kuis"} — % peserta yang menjawab benar.</p>
+      <p className="mb-4 text-xs text-zinc-500">
+        % peserta yang menjawab benar.{" "}
+        {hasPost
+          ? "Abu-abu = sebelum event, hijau = sesudah."
+          : `${meta.quiz ?? "Kuis"} — post-test belum ada, jadi belum ada pembanding.`}
+      </p>
 
       <div className="space-y-3">
         {questions.map((q) => {
           const isOpen = open === q.order_index;
+          const headline = q.post ?? q.pre;
           return (
             <div key={q.order_index} className="rounded-xl border border-white/5 bg-white/5 p-3">
-              <button
-                onClick={() => setOpen(isOpen ? null : q.order_index)}
-                className="w-full text-left"
-              >
-                <div className="mb-1.5 flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 break-words text-xs text-zinc-300">
-                    {q.order_index}. {q.text}
-                  </span>
-                  <span className={`shrink-0 text-xs font-semibold tabular-nums ${q.pct >= 80 ? "text-emerald-400" : q.pct >= 50 ? "text-amber-300" : "text-red-400"}`}>
-                    {q.pct}%
-                    <span className="ml-1 font-normal text-zinc-600">({q.correct}/{q.answered})</span>
+              <button onClick={() => setOpen(isOpen ? null : q.order_index)} className="w-full text-left">
+                <div className="mb-2 flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 break-words text-xs text-zinc-300">{q.order_index}. {q.text}</span>
+                  <span className="shrink-0 whitespace-nowrap text-xs tabular-nums">
+                    <span className="text-zinc-500">{q.pre ? `${q.pre.pct}%` : "—"}</span>
+                    <span className="mx-1 text-zinc-700">→</span>
+                    <span className={`font-semibold ${headline ? quizColor(q.post?.pct ?? q.pre!.pct) : "text-zinc-600"}`}>
+                      {q.post ? `${q.post.pct}%` : "—"}
+                    </span>
+                    {q.delta !== null && (
+                      <span className={`ml-2 font-semibold ${q.delta > 0 ? "text-emerald-400" : q.delta < 0 ? "text-red-400" : "text-zinc-500"}`}>
+                        {q.delta > 0 ? "▲ +" : q.delta < 0 ? "▼ " : ""}{q.delta}pp
+                      </span>
+                    )}
                   </span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-sm bg-zinc-900">
-                  <div
-                    className="h-full rounded-r-[4px]"
-                    style={{ width: `${Math.max(q.pct, 0.5)}%`, background: CORRECT_COLOR }}
-                  />
+
+                {/* Two thin bars, 2px surface gap - pre in context gray, post in accent. */}
+                <div className="space-y-[2px]">
+                  <QuizBar pct={q.pre?.pct ?? null} color={WRONG_COLOR} label="Pre" />
+                  {hasPost && <QuizBar pct={q.post?.pct ?? null} color={CORRECT_COLOR} label="Post" />}
                 </div>
               </button>
 
               {isOpen && (
-                <div className="mt-3 space-y-2 border-t border-white/5 pt-3">
-                  {q.options.map((o) => (
-                    <div key={o.label}>
-                      <div className="mb-1 flex items-baseline justify-between gap-3">
-                        <span className="min-w-0 break-words text-[11px] text-zinc-400">
-                          {o.label}
-                          {o.is_correct && (
-                            <span className="ml-2 text-[10px] font-semibold uppercase text-emerald-400">Kunci</span>
-                          )}
-                        </span>
-                        <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
-                          {o.pct}% <span className="text-zinc-700">({o.count})</span>
-                        </span>
+                <div className="mt-3 space-y-3 border-t border-white/5 pt-3">
+                  {(q.post ?? q.pre)!.options.map((o) => {
+                    const preO = q.pre?.options.find((x) => x.label === o.label);
+                    const postO = q.post?.options.find((x) => x.label === o.label);
+                    return (
+                      <div key={o.label}>
+                        <div className="mb-1 flex items-baseline justify-between gap-3">
+                          <span className="min-w-0 break-words text-[11px] text-zinc-400">
+                            {o.label}
+                            {o.is_correct && <span className="ml-2 text-[10px] font-semibold uppercase text-emerald-400">Kunci</span>}
+                          </span>
+                          <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+                            {preO ? `${preO.pct}%` : "—"} <span className="text-zinc-700">→</span> {postO ? `${postO.pct}%` : "—"}
+                          </span>
+                        </div>
+                        <div className="space-y-[2px]">
+                          <QuizBar pct={preO?.pct ?? null} color={o.is_correct ? CORRECT_COLOR : WRONG_COLOR} thin />
+                          {hasPost && <QuizBar pct={postO?.pct ?? null} color={o.is_correct ? CORRECT_COLOR : WRONG_COLOR} thin dim={!o.is_correct} />}
+                        </div>
                       </div>
-                      <div className="h-1.5 overflow-hidden rounded-sm bg-zinc-900">
-                        <div
-                          className="h-full rounded-r-[4px]"
-                          style={{ width: `${Math.max(o.pct, 0.5)}%`, background: o.is_correct ? CORRECT_COLOR : WRONG_COLOR }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -345,6 +364,20 @@ function QuizAnalysis({ questions, title }: { questions: QuizQuestion[]; title: 
         })}
       </div>
     </section>
+  );
+}
+
+function QuizBar({ pct, color, label, thin = false, dim = false }: { pct: number | null; color: string; label?: string; thin?: boolean; dim?: boolean }) {
+  return (
+    <div className="flex items-center gap-2">
+      {label && <span className="w-7 shrink-0 text-[9px] uppercase text-zinc-600">{label}</span>}
+      <div className={`${thin ? "h-1.5" : "h-2"} flex-1 overflow-hidden rounded-sm bg-zinc-900`}>
+        <div
+          className="h-full rounded-r-[4px]"
+          style={{ width: `${Math.max(pct ?? 0, 0.5)}%`, background: color, opacity: pct === null ? 0.15 : dim ? 0.55 : 1 }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -482,13 +515,34 @@ function Delta({ value }: { value: number | null }) {
   );
 }
 
-function Quiz({ pct, correct, total }: { pct: number | null; correct: number | null; total: number }) {
-  if (pct === null) return <span className="text-zinc-600">-</span>;
-  const color = pct >= 80 ? "text-emerald-400" : pct >= 50 ? "text-amber-300" : "text-red-400";
+const quizColor = (pct: number) =>
+  pct >= 80 ? "text-emerald-400" : pct >= 50 ? "text-amber-300" : "text-red-400";
+
+/**
+ * The quiz is sat twice with the same questions, so the pair is the point -
+ * a lone post score hides whether anything was learned.
+ */
+function Quiz({ row, total }: { row: ParticipantRow; total: number }) {
+  const { quiz_pre: pre, quiz_post: post, quiz_delta: d } = row;
+  if (!pre && !post) return <span className="text-zinc-600">-</span>;
+
   return (
-    <span className={`font-semibold ${color}`}>
-      {pct}%
-      {total > 0 && <span className="ml-1 text-xs font-normal text-zinc-500">({correct}/{total})</span>}
-    </span>
+    <div className="whitespace-nowrap">
+      <span className="tabular-nums">
+        <span className={pre ? quizColor(pre.pct) : "text-zinc-600"}>{pre ? `${pre.pct}%` : "—"}</span>
+        <span className="mx-1 text-zinc-700">→</span>
+        <span className={`font-semibold ${post ? quizColor(post.pct) : "text-zinc-600"}`}>{post ? `${post.pct}%` : "—"}</span>
+      </span>
+      {d !== null && (
+        <span className={`ml-2 text-xs font-semibold tabular-nums ${d > 0 ? "text-emerald-400" : d < 0 ? "text-red-400" : "text-zinc-500"}`}>
+          {d > 0 ? "▲ +" : d < 0 ? "▼ " : ""}{d}pp
+        </span>
+      )}
+      {total > 0 && (
+        <div className="text-[10px] text-zinc-600">
+          {pre ? `${pre.correct}` : "—"}/{total} → {post ? `${post.correct}` : "—"}/{total}
+        </div>
+      )}
+    </div>
   );
 }

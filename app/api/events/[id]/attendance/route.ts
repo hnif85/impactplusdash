@@ -31,8 +31,10 @@ type ScoreRow = {
   pre: number | null;
   post: number | null;
   delta: number | null;
-  quiz_pct: number | null;
-  quiz_correct: number | null;
+  quiz_pre: { pct: number; correct: number } | null;
+  quiz_post: { pct: number; correct: number } | null;
+  /** Percentage points gained between the two quiz sittings. */
+  quiz_delta: number | null;
 };
 
 type AnswerRow = ScoringAnswer & { response_id: string };
@@ -99,23 +101,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // link rather than erroring.
     const eventPostId = (event.post_survey_id as string | null | undefined) ?? null;
 
-    const quizId = (event.survey_id as string | null) ?? null;
-    const surveyIds = [preId, postId, quizId, eventPostId].filter(Boolean) as string[];
+    // The event quiz is asked twice: survey_id before the event, post_survey_id
+    // after. Same questions, separate survey rows - one response per survey per
+    // customer is enforced by a unique index, so they cannot share an id.
+    const quizPreId = (event.survey_id as string | null) ?? null;
+    const quizPostId = eventPostId;
+    const surveyIds = [preId, postId, quizPreId, quizPostId].filter(Boolean) as string[];
 
-    // Per-question quiz breakdown lives here rather than on the program results
-    // page: the quiz belongs to this event and answers "which material didn't land".
+    // Per-question breakdown lives here rather than on the program results page:
+    // the quiz belongs to this event and answers "which material didn't land".
+    type QuizSide = { answered: number; correct: number; pct: number; options: { label: string; count: number; pct: number; is_correct: boolean }[] };
     let quizBreakdown: {
       order_index: number; text: string; correct_answer: string;
-      answered: number; correct: number; pct: number;
-      options: { label: string; count: number; pct: number; is_correct: boolean }[];
+      pre: QuizSide | null; post: QuizSide | null; delta: number | null;
     }[] = [];
-    let quizQuestionIds: string[] = [];
 
     const rows = new Map<string, ScoreRow>();
     const blank = (key: string, guid: string | null, email: string, name: string): ScoreRow => ({
       key, customer_guid: guid, email, full_name: name,
       attended: false, attended_at: null, attended_dates: [],
-      pre: null, post: null, delta: null, quiz_pct: null, quiz_correct: null,
+      pre: null, post: null, delta: null,
+      quiz_pre: null, quiz_post: null, quiz_delta: null,
     });
 
     for (const a of attendance ?? []) {
@@ -135,8 +141,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       });
     }
 
-    const surveyMeta: { pre: string | null; post: string | null; quiz: string | null } = {
-      pre: null, post: null, quiz: null,
+    const surveyMeta: { pre: string | null; post: string | null; quiz: string | null; quiz_post: string | null } = {
+      pre: null, post: null, quiz: null, quiz_post: null,
     };
     let quizTotal = 0;
     const surveyTitles = new Map<string, string>();
@@ -150,7 +156,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         surveyTitles.set(s.id, s.title);
         if (s.id === preId) surveyMeta.pre = s.title;
         if (s.id === postId) surveyMeta.post = s.title;
-        if (s.id === quizId) surveyMeta.quiz = s.title;
+        if (s.id === quizPreId) surveyMeta.quiz = s.title;
+        if (s.id === quizPostId) surveyMeta.quiz_post = s.title;
       }
 
       // A survey can be shared across companies, so responses must be scoped to
@@ -187,12 +194,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const ratingQ = new Set(
           (questions ?? []).filter((q) => q.question_type === "rating").map((q) => q.id)
         );
-        const answerKey = new Map<string, string>();
-        for (const q of questions ?? []) {
-          if (q.survey_id === quizId && q.correct_answer) answerKey.set(q.id, q.correct_answer);
-        }
-        quizTotal = answerKey.size;
-        quizQuestionIds = [...answerKey.keys()];
+        const keyFor = (surveyId: string | null) => {
+          const m = new Map<string, string>();
+          if (!surveyId) return m;
+          for (const q of questions ?? []) {
+            if (q.survey_id === surveyId && q.correct_answer) m.set(q.id, q.correct_answer);
+          }
+          return m;
+        };
+        const answerKeyPre = keyFor(quizPreId);
+        const answerKeyPost = keyFor(quizPostId);
+        // The pre sitting defines the quiz length; the post copy mirrors it.
+        quizTotal = answerKeyPre.size || answerKeyPost.size;
 
         let answers: AnswerRow[] = [];
         if (responseIds.length > 0) {
@@ -211,44 +224,61 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           byResponse.set(a.response_id, list);
         }
 
-        if (quizQuestionIds.length > 0) {
+        if (answerKeyPre.size > 0 || answerKeyPost.size > 0) {
           const byQuestion = new Map<string, AnswerRow[]>();
           for (const a of answers) {
-            if (!answerKey.has(a.question_id)) continue;
             const list = byQuestion.get(a.question_id) ?? [];
             list.push(a);
             byQuestion.set(a.question_id, list);
           }
 
-          quizBreakdown = (questions ?? [])
-            .filter((q) => q.survey_id === quizId && answerKey.has(q.id))
-            .map((q) => {
-              const list = byQuestion.get(q.id) ?? [];
-              const opts = Array.isArray(q.options) ? (q.options as string[]) : [];
-              const counts = new Map<string, number>(opts.map((o) => [o, 0]));
-              let correct = 0;
-              for (const a of list) {
-                const given = a.answer_text ?? (Array.isArray(a.selected_options) ? (a.selected_options as string[])[0] : null);
-                if (given && counts.has(given)) counts.set(given, counts.get(given)! + 1);
-                if (given === q.correct_answer) correct += 1;
-              }
-              const base = list.length || 1;
-              return {
-                order_index: q.order_index,
-                text: q.question_text,
-                correct_answer: q.correct_answer!,
-                answered: list.length,
-                correct,
-                pct: Math.round((correct / base) * 100),
-                options: [...counts].map(([label, count]) => ({
-                  label, count,
-                  pct: Math.round((count / base) * 100),
-                  is_correct: label === q.correct_answer,
-                })),
-              };
-            })
-            // Hardest first: the questions that need re-teaching lead.
-            .sort((a, b) => a.pct - b.pct);
+          const sideFor = (q: { id: string; options: unknown; correct_answer: string | null }): QuizSide | null => {
+            const list = byQuestion.get(q.id) ?? [];
+            if (list.length === 0) return null;
+            const opts = Array.isArray(q.options) ? (q.options as string[]) : [];
+            const counts = new Map<string, number>(opts.map((o) => [o, 0]));
+            let correct = 0;
+            for (const a of list) {
+              const given = a.answer_text ?? (Array.isArray(a.selected_options) ? (a.selected_options as string[])[0] : null);
+              if (given && counts.has(given)) counts.set(given, counts.get(given)! + 1);
+              if (given === q.correct_answer) correct += 1;
+            }
+            const base = list.length;
+            return {
+              answered: base,
+              correct,
+              pct: Math.round((correct / base) * 100),
+              options: [...counts].map(([label, count]) => ({
+                label, count,
+                pct: Math.round((count / base) * 100),
+                is_correct: label === q.correct_answer,
+              })),
+            };
+          };
+
+          // The post quiz is a copy, so order_index pairs the two sittings.
+          const preQs = (questions ?? []).filter((q) => q.survey_id === quizPreId && q.correct_answer);
+          const postQs = (questions ?? []).filter((q) => q.survey_id === quizPostId && q.correct_answer);
+          const postByOrder = new Map(postQs.map((q) => [q.order_index, q]));
+          const orders = [...new Set([...preQs.map((q) => q.order_index), ...postQs.map((q) => q.order_index)])].sort((a, b) => a - b);
+
+          quizBreakdown = orders.map((order) => {
+            const p = preQs.find((q) => q.order_index === order);
+            const s = postByOrder.get(order);
+            const ref = p ?? s!;
+            const pre = p ? sideFor(p) : null;
+            const post = s ? sideFor(s) : null;
+            return {
+              order_index: order,
+              text: ref.question_text,
+              correct_answer: ref.correct_answer!,
+              pre,
+              post,
+              delta: pre && post ? post.pct - pre.pct : null,
+            };
+          })
+            // Weakest current state first: the material still needing work leads.
+            .sort((a, b) => (a.post?.pct ?? a.pre?.pct ?? 0) - (b.post?.pct ?? b.pre?.pct ?? 0));
         }
 
         // Name/email for people who answered but never checked in.
@@ -283,12 +313,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             }
           }
 
-          if (r.survey_id === quizId) {
-            const score = quizScore(list, answerKey);
-            if (score) {
-              row.quiz_correct = score.correct;
-              row.quiz_pct = score.pct;
-            }
+          if (r.survey_id === quizPreId) {
+            const score = quizScore(list, answerKeyPre);
+            if (score) row.quiz_pre = { pct: score.pct, correct: score.correct };
+          }
+          if (r.survey_id === quizPostId) {
+            const score = quizScore(list, answerKeyPost);
+            if (score) row.quiz_post = { pct: score.pct, correct: score.correct };
           }
         }
       }
@@ -298,6 +329,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ...r,
       attended_dates: [...r.attended_dates].sort(),
       delta: delta(r.pre, r.post),
+      // Percentage points, so "40% → 80%" reads as +40, not +100%.
+      quiz_delta: r.quiz_pre && r.quiz_post ? r.quiz_post.pct - r.quiz_pre.pct : null,
     }));
 
     // Most-complete rows first, then alphabetical.
