@@ -394,6 +394,23 @@ CREATE TABLE public.referral_partners (
   activity_slug text,
   CONSTRAINT referral_partners_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.attendance_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL,
+  email text NOT NULL,
+  customer_guid text,
+  full_name text NOT NULL DEFAULT ''::text,
+  survey_submitted boolean NOT NULL DEFAULT false,
+  attended_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT attendance_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT attendance_logs_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.training_events(id) ON DELETE CASCADE,
+  CONSTRAINT attendance_logs_customer_guid_fkey FOREIGN KEY (customer_guid) REFERENCES public.cms_customers(guid) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_event_id ON public.attendance_logs(event_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_email ON public.attendance_logs(email);
+CREATE INDEX IF NOT EXISTS idx_attendance_logs_event_email ON public.attendance_logs(event_id, email);
+
 CREATE TABLE public.survey_answers (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   response_id uuid NOT NULL,
@@ -415,6 +432,7 @@ CREATE TABLE public.survey_questions (
   rating_scale jsonb DEFAULT '{"max": 5, "min": 1}'::jsonb,
   is_required boolean DEFAULT false,
   order_index integer NOT NULL,
+  correct_answer text,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT survey_questions_pkey PRIMARY KEY (id),
   CONSTRAINT survey_questions_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.surveys(id)
@@ -422,10 +440,11 @@ CREATE TABLE public.survey_questions (
 CREATE TABLE public.survey_responses (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   survey_id uuid NOT NULL,
-  user_id uuid NOT NULL,
-  company_id uuid NOT NULL,
+  user_id uuid,
+  company_id uuid,
   submitted_at timestamp with time zone DEFAULT now(),
   completion_time_seconds integer,
+  customer_guid text,
   CONSTRAINT survey_responses_pkey PRIMARY KEY (id),
   CONSTRAINT survey_responses_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.surveys(id),
   CONSTRAINT survey_responses_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_users(id),
@@ -505,6 +524,10 @@ CREATE TABLE public.training_events (
   is_active boolean DEFAULT true,
   created_by text,
   updated_at timestamp with time zone DEFAULT now(),
+  start_date date,
+  end_date date,
+  company_id uuid REFERENCES public.companies(id) ON DELETE CASCADE,
+  survey_id uuid REFERENCES public.surveys(id) ON DELETE SET NULL,
   CONSTRAINT training_events_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.transaction_details (
