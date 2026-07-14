@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getEvent } from "@/lib/attendance";
+import { getEvent, getCompanyRef } from "@/lib/attendance";
 
 const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
@@ -11,7 +11,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     }
     const event = await getEvent(eventId);
     if (!event) return NextResponse.json({ error: "Event tidak ditemukan." }, { status: 404 });
-    return NextResponse.json({ name: event.name, event_date: event.event_date, location: event.location });
+
+    // Branding comes from the company, so a BRI event never wears another
+    // client's name.
+    const company = await getCompanyRef(event.company_id);
+
+    return NextResponse.json({
+      name: event.name,
+      event_date: event.event_date,
+      location: event.location,
+      is_active: event.is_active,
+      company: company
+        ? { name: company.name, logo_url: company.logo_url, instagram: company.instagram }
+        : null,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: message }, { status: 500 });

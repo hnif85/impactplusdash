@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
+import { averageRating, quizScore, delta, type ScoringAnswer } from "@/lib/surveys/scoring";
+import { eventDays } from "@/lib/attendance";
 
 const JWT_SECRET = process.env.IMPACT_LINK_SECRET!;
 const supabase = createClient(
@@ -18,6 +20,23 @@ function getAuthUser(req: Request) {
   catch { return null; }
 }
 
+type ScoreRow = {
+  key: string;
+  customer_guid: string | null;
+  email: string;
+  full_name: string;
+  attended: boolean;
+  attended_at: string | null;
+  attended_dates: string[];
+  pre: number | null;
+  post: number | null;
+  delta: number | null;
+  quiz_pct: number | null;
+  quiz_correct: number | null;
+};
+
+type AnswerRow = ScoringAnswer & { response_id: string };
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = getAuthUser(req);
@@ -28,10 +47,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "Event id invalid." }, { status: 400 });
     }
 
-    // Verify event belongs to user's company
+    // select("*") so the post_survey_id column, added by a later migration,
+    // does not break this read before it exists.
     const { data: event } = await supabase
       .from("training_events")
-      .select("id, name, company_id")
+      .select("*")
       .eq("id", eventId)
       .maybeSingle();
 
@@ -40,14 +60,277 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { data, error } = await supabase
+    // select("*") so attendance_date (separate migration) does not break this.
+    const { data: attendance, error: attendanceError } = await supabase
       .from("attendance_logs")
-      .select("id, email, full_name, survey_submitted, attended_at")
+      .select("*")
       .eq("event_id", eventId)
       .order("attended_at", { ascending: false });
 
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ attendance: data ?? [], event_name: event.name });
+    if (attendanceError) throw new Error(attendanceError.message);
+
+    // A multi-day event has one row per participant per day.
+    const eventDayList = eventDays(event as { start_date?: string | null; end_date?: string | null; event_date?: string | null });
+    const dayOf = (r: Record<string, unknown>) =>
+      (r.attendance_date as string | null) ?? (r.attended_at ? String(r.attended_at).slice(0, 10) : null);
+
+    // Pre/post surveys live on the company, not the event. Two events under one
+    // company would therefore report the same pre/post responses.
+    let preId: string | null = null;
+    let postId: string | null = null;
+    let referralCode: string | null = null;
+
+    let companyName: string | null = null;
+
+    if (event.company_id) {
+      const { data: company } = await supabase
+        .from("companies")
+        .select("name, metadata")
+        .eq("id", event.company_id)
+        .maybeSingle();
+      companyName = company?.name ?? null;
+      const meta = (company?.metadata ?? {}) as Record<string, unknown>;
+      preId = (meta.program_pre_survey_id as string) ?? null;
+      postId = (meta.program_post_survey_id as string) ?? null;
+      referralCode = (meta.referral_code as string) ?? null;
+    }
+
+    // Undefined until the post_survey_id migration is applied - the UI hides the
+    // link rather than erroring.
+    const eventPostId = (event.post_survey_id as string | null | undefined) ?? null;
+
+    const quizId = (event.survey_id as string | null) ?? null;
+    const surveyIds = [preId, postId, quizId, eventPostId].filter(Boolean) as string[];
+
+    // Per-question quiz breakdown lives here rather than on the program results
+    // page: the quiz belongs to this event and answers "which material didn't land".
+    let quizBreakdown: {
+      order_index: number; text: string; correct_answer: string;
+      answered: number; correct: number; pct: number;
+      options: { label: string; count: number; pct: number; is_correct: boolean }[];
+    }[] = [];
+    let quizQuestionIds: string[] = [];
+
+    const rows = new Map<string, ScoreRow>();
+    const blank = (key: string, guid: string | null, email: string, name: string): ScoreRow => ({
+      key, customer_guid: guid, email, full_name: name,
+      attended: false, attended_at: null, attended_dates: [],
+      pre: null, post: null, delta: null, quiz_pct: null, quiz_correct: null,
+    });
+
+    for (const a of attendance ?? []) {
+      const key = a.customer_guid ?? `email:${(a.email ?? "").toLowerCase()}`;
+      const existing = rows.get(key);
+      const d = dayOf(a);
+      if (existing) {
+        // Same person, another day.
+        if (d && !existing.attended_dates.includes(d)) existing.attended_dates.push(d);
+        continue;
+      }
+      rows.set(key, {
+        ...blank(key, a.customer_guid ?? null, a.email ?? "", a.full_name ?? ""),
+        attended: true,
+        attended_at: a.attended_at ?? null,
+        attended_dates: d ? [d] : [],
+      });
+    }
+
+    const surveyMeta: { pre: string | null; post: string | null; quiz: string | null } = {
+      pre: null, post: null, quiz: null,
+    };
+    let quizTotal = 0;
+    const surveyTitles = new Map<string, string>();
+
+    if (surveyIds.length > 0) {
+      const { data: surveyRows } = await supabase
+        .from("surveys")
+        .select("id, title")
+        .in("id", surveyIds);
+      for (const s of surveyRows ?? []) {
+        surveyTitles.set(s.id, s.title);
+        if (s.id === preId) surveyMeta.pre = s.title;
+        if (s.id === postId) surveyMeta.post = s.title;
+        if (s.id === quizId) surveyMeta.quiz = s.title;
+      }
+
+      // A survey can be shared across companies, so responses must be scoped to
+      // this company's customers.
+      let customerGuids: string[] = [];
+      if (referralCode) {
+        const { data: customers } = await supabase
+          .from("cms_customers")
+          .select("guid")
+          .eq("referal_code", referralCode);
+        customerGuids = (customers ?? []).map((c) => c.guid).filter(Boolean) as string[];
+      }
+
+      if (customerGuids.length > 0) {
+        const { data: responses, error: responsesError } = await supabase
+          .from("survey_responses")
+          .select("id, survey_id, customer_guid")
+          .in("survey_id", surveyIds)
+          .in("customer_guid", customerGuids);
+        if (responsesError) throw new Error(responsesError.message);
+
+        const responseIds = (responses ?? []).map((r) => r.id);
+
+        const { data: questions, error: questionsError } = await supabase
+          .from("survey_questions")
+          .select("id, survey_id, question_type, correct_answer, question_text, options, order_index")
+          .in("survey_id", surveyIds)
+          .order("order_index", { ascending: true });
+        if (questionsError) throw new Error(questionsError.message);
+
+        // Pre/post carry no answer key, so the only number comparable between
+        // them is the shared set of 1-5 rating questions. The quiz is the only
+        // survey that is actually scored against a key.
+        const ratingQ = new Set(
+          (questions ?? []).filter((q) => q.question_type === "rating").map((q) => q.id)
+        );
+        const answerKey = new Map<string, string>();
+        for (const q of questions ?? []) {
+          if (q.survey_id === quizId && q.correct_answer) answerKey.set(q.id, q.correct_answer);
+        }
+        quizTotal = answerKey.size;
+        quizQuestionIds = [...answerKey.keys()];
+
+        let answers: AnswerRow[] = [];
+        if (responseIds.length > 0) {
+          const { data: answerRows, error: answersError } = await supabase
+            .from("survey_answers")
+            .select("response_id, question_id, answer_text, answer_value, selected_options")
+            .in("response_id", responseIds);
+          if (answersError) throw new Error(answersError.message);
+          answers = answerRows ?? [];
+        }
+
+        const byResponse = new Map<string, AnswerRow[]>();
+        for (const a of answers) {
+          const list = byResponse.get(a.response_id) ?? [];
+          list.push(a);
+          byResponse.set(a.response_id, list);
+        }
+
+        if (quizQuestionIds.length > 0) {
+          const byQuestion = new Map<string, AnswerRow[]>();
+          for (const a of answers) {
+            if (!answerKey.has(a.question_id)) continue;
+            const list = byQuestion.get(a.question_id) ?? [];
+            list.push(a);
+            byQuestion.set(a.question_id, list);
+          }
+
+          quizBreakdown = (questions ?? [])
+            .filter((q) => q.survey_id === quizId && answerKey.has(q.id))
+            .map((q) => {
+              const list = byQuestion.get(q.id) ?? [];
+              const opts = Array.isArray(q.options) ? (q.options as string[]) : [];
+              const counts = new Map<string, number>(opts.map((o) => [o, 0]));
+              let correct = 0;
+              for (const a of list) {
+                const given = a.answer_text ?? (Array.isArray(a.selected_options) ? (a.selected_options as string[])[0] : null);
+                if (given && counts.has(given)) counts.set(given, counts.get(given)! + 1);
+                if (given === q.correct_answer) correct += 1;
+              }
+              const base = list.length || 1;
+              return {
+                order_index: q.order_index,
+                text: q.question_text,
+                correct_answer: q.correct_answer!,
+                answered: list.length,
+                correct,
+                pct: Math.round((correct / base) * 100),
+                options: [...counts].map(([label, count]) => ({
+                  label, count,
+                  pct: Math.round((count / base) * 100),
+                  is_correct: label === q.correct_answer,
+                })),
+              };
+            })
+            // Hardest first: the questions that need re-teaching lead.
+            .sort((a, b) => a.pct - b.pct);
+        }
+
+        // Name/email for people who answered but never checked in.
+        const answeredGuids = [...new Set((responses ?? []).map((r) => r.customer_guid).filter(Boolean))] as string[];
+        const profiles = new Map<string, { email: string; full_name: string }>();
+        if (answeredGuids.length > 0) {
+          const { data: customers } = await supabase
+            .from("cms_customers")
+            .select("guid, email, full_name, username")
+            .in("guid", answeredGuids);
+          for (const c of customers ?? []) {
+            // full_name is frequently null in cms_customers.
+            profiles.set(c.guid, { email: c.email ?? "", full_name: c.full_name || c.username || "" });
+          }
+        }
+
+        for (const r of responses ?? []) {
+          if (!r.customer_guid) continue;
+          const key = r.customer_guid;
+          if (!rows.has(key)) {
+            const p = profiles.get(key);
+            rows.set(key, blank(key, key, p?.email ?? "", p?.full_name ?? ""));
+          }
+          const row = rows.get(key)!;
+          const list = byResponse.get(r.id) ?? [];
+
+          if (r.survey_id === preId || r.survey_id === postId) {
+            const avg = averageRating(list, ratingQ);
+            if (avg !== null) {
+              if (r.survey_id === preId) row.pre = avg;
+              else row.post = avg;
+            }
+          }
+
+          if (r.survey_id === quizId) {
+            const score = quizScore(list, answerKey);
+            if (score) {
+              row.quiz_correct = score.correct;
+              row.quiz_pct = score.pct;
+            }
+          }
+        }
+      }
+    }
+
+    const result = [...rows.values()].map((r) => ({
+      ...r,
+      attended_dates: [...r.attended_dates].sort(),
+      delta: delta(r.pre, r.post),
+    }));
+
+    // Most-complete rows first, then alphabetical.
+    result.sort((a, b) => {
+      const fillA = (a.pre !== null ? 2 : 0) + (a.post !== null ? 1 : 0);
+      const fillB = (b.pre !== null ? 2 : 0) + (b.post !== null ? 1 : 0);
+      if (fillA !== fillB) return fillB - fillA;
+      return (a.full_name || a.email).localeCompare(b.full_name || b.email);
+    });
+
+    return NextResponse.json({
+      attendance: result,
+      event_name: event.name,
+      company_name: companyName,
+      event_days: eventDayList,
+      total_check_ins: (attendance ?? []).length,
+      survey_meta: surveyMeta,
+      quiz_total: quizTotal,
+      quiz_breakdown: quizBreakdown,
+      rating_scale_max: 5,
+      // Post-survey links are shared with participants; they open the public
+      // page that asks for an email first.
+      links: {
+        attendance: `/attendance/${eventId}`,
+        event_post: eventPostId && referralCode
+          ? `/survey/${eventPostId}?ref=${encodeURIComponent(referralCode)}`
+          : null,
+        event_post_title: eventPostId ? (surveyTitles.get(eventPostId) ?? null) : null,
+        program_post: postId && referralCode
+          ? `/survey/${postId}?ref=${encodeURIComponent(referralCode)}`
+          : null,
+      },
+    });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unexpected error" }, { status: 500 });
   }

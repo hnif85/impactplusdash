@@ -12,7 +12,9 @@ export default function CreateEventPage() {
   const [name, setName] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [location, setLocation] = useState("");
-  const [eventType, setEventType] = useState("event");
+  // training_events.event_type is constrained to online/offline - it records the
+  // event's mode, not its category.
+  const [eventType, setEventType] = useState("offline");
   const [description, setDescription] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("");
   const [surveyId, setSurveyId] = useState("");
@@ -84,10 +86,10 @@ export default function CreateEventPage() {
 
         <Field label="Tipe Event">
           <select value={eventType} onChange={(e) => setEventType(e.target.value)} className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400">
-            <option value="event">Event</option>
-            <option value="training">Training</option>
-            <option value="workshop">Workshop</option>
+            <option value="offline">Offline (luring)</option>
+            <option value="online">Online (daring)</option>
           </select>
+          <p className="mt-1 text-xs text-zinc-500">Moda pelaksanaan event.</p>
         </Field>
 
         <Field label="Deskripsi">

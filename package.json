@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:scoring": "node --experimental-strip-types --test lib/surveys/scoring.test.mts",
     "seed:baseline": "node supabase/seed_baseline_umkm.js",
     "seed:baseline:bri": "node supabase/seed_baseline_bri.js"
   },
