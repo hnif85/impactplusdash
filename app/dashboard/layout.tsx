@@ -42,9 +42,17 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-zinc-50">
       <header className="flex items-center justify-between border-b border-white/10 bg-black/70 px-6 py-4 backdrop-blur">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-lg font-semibold text-zinc-900 shadow-lg shadow-zinc-500/30">
-            IP
-          </div>
+          {profile?.company_logo ? (
+            <img
+              src={profile.company_logo}
+              alt={profile.company_name ?? "Logo"}
+              className="h-11 w-11 rounded-2xl object-cover shadow-lg shadow-zinc-500/30"
+            />
+          ) : (
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-lg font-semibold text-zinc-900 shadow-lg shadow-zinc-500/30">
+              IP
+            </div>
+          )}
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Impact Plus Dashboard</p>
             <p className="text-base font-semibold text-white">{roleBadge}</p>

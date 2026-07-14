@@ -35,6 +35,7 @@ export interface DashboardUserProfile {
   referral_code?: string | null;
   company_slug?: string | null;
   company_name?: string | null;
+  company_logo?: string | null;
 }
 
 export interface AuthenticatedUser extends DashboardUserProfile {

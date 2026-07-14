@@ -38,6 +38,7 @@ export async function GET(req: Request) {
     let referral_code: string | null = null;
     let company_slug: string | null = null;
     let company_name: string | null = null;
+    let company_logo: string | null = null;
 
     if (user.company_id) {
       const { data: company } = await supabase
@@ -46,13 +47,11 @@ export async function GET(req: Request) {
         .eq("id", user.company_id)
         .maybeSingle();
 
-      referral_code =
-        (company?.metadata as Record<string, unknown> | null | undefined)?.referral_code as
-          | string
-          | null
-          | undefined ?? null;
+      const meta = company?.metadata as Record<string, unknown> | null | undefined;
+      referral_code = (meta?.referral_code as string | null | undefined) ?? null;
       company_slug = company?.slug ?? null;
       company_name = company?.name ?? null;
+      company_logo = (meta?.logo_url as string | null | undefined) ?? null;
     }
 
     return NextResponse.json({
@@ -60,6 +59,7 @@ export async function GET(req: Request) {
       referral_code,
       company_slug,
       company_name,
+      company_logo,
     });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
