@@ -26,6 +26,9 @@ type PairedQuestion = {
   order_index: number;
   text: string;
   type: string;
+  in_pre: boolean;
+  in_post: boolean;
+  reversed: boolean;
   pre: Side;
   post: Side;
   delta: number | null;
@@ -194,6 +197,33 @@ function PostSurveyLink({ url, title }: { url: string | null; title: string | nu
   );
 }
 
+/**
+ * A reverse-coded question is shown flipped so it points the same way as every
+ * other rating. Without saying so, a reader comparing this to the raw answers
+ * would think the number was wrong.
+ */
+function ReversedTag() {
+  return (
+    <span
+      className="ml-2 whitespace-nowrap rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300/90"
+      title="Skor dibalik: jawaban asli 'makin tinggi makin sulit', ditampilkan sebagai 'makin tinggi makin baik' agar sebanding dengan rating lain."
+    >
+      skor dibalik
+    </span>
+  );
+}
+
+function PreOnlyTag() {
+  return (
+    <span
+      className="ml-2 whitespace-nowrap rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500"
+      title="Pertanyaan profil — hanya ditanyakan di Pre, jadi tidak ada pembanding Post."
+    >
+      hanya di pre
+    </span>
+  );
+}
+
 function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-4 text-xs text-zinc-400">
@@ -320,6 +350,7 @@ function Dumbbell({ q, max }: { q: PairedQuestion; max: number }) {
       <div className="mb-2 flex items-baseline justify-between gap-4">
         <p className="min-w-0 text-xs text-zinc-300">
           {q.order_index}. {q.text}
+          {q.reversed && <ReversedTag />}
         </p>
         <div className="flex shrink-0 items-baseline gap-3">
           <span className="text-xs tabular-nums text-zinc-500">
@@ -361,26 +392,35 @@ function ChoiceCompare({ q }: { q: PairedQuestion }) {
     <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
       <p className="text-sm font-semibold text-white">
         {q.order_index}. {q.text}
+        {!q.in_post && <PreOnlyTag />}
       </p>
       <p className="mb-4 text-xs text-zinc-500">
-        Pre {q.pre.total_answers} jawaban · Post {q.post.total_answers} jawaban
+        {q.in_post
+          ? `Pre ${q.pre.total_answers} jawaban · Post ${q.post.total_answers} jawaban`
+          : `${q.pre.total_answers} jawaban — pertanyaan profil, tidak ditanyakan ulang di Post.`}
       </p>
 
       <div className="space-y-3">
         {labels.map((label) => {
           const p = find(q.pre, label);
           const s = find(q.post, label);
-          const d = p && s ? s.pct - p.pct : null;
+          const d = q.in_post && p && s ? s.pct - p.pct : null;
           return (
             <div key={label}>
               <div className="mb-1 flex items-baseline justify-between gap-3">
                 <span className="min-w-0 break-words text-xs text-zinc-300">{label}</span>
-                <DeltaTag value={d} suffix="pp" />
+                {q.in_post ? <DeltaTag value={d} suffix="pp" /> : (
+                  <span className="shrink-0 text-xs tabular-nums text-zinc-500">
+                    {p?.pct ?? 0}% <span className="text-zinc-700">({p?.count ?? 0})</span>
+                  </span>
+                )}
               </div>
-              {/* Two thin bars, 2px surface gap between them - no strokes. */}
+              {/* Two thin bars, 2px surface gap between them - no strokes.
+                  A Pre-only question draws one bar; a second, empty one would
+                  read as "nobody answered Post". */}
               <div className="space-y-[2px]">
-                <Bar pct={p?.pct ?? 0} count={p?.count ?? 0} color={PRE_COLOR} />
-                <Bar pct={s?.pct ?? 0} count={s?.count ?? 0} color={POST_COLOR} />
+                <Bar pct={p?.pct ?? 0} count={p?.count ?? 0} color={q.in_post ? PRE_COLOR : POST_COLOR} />
+                {q.in_post && <Bar pct={s?.pct ?? 0} count={s?.count ?? 0} color={POST_COLOR} />}
               </div>
             </div>
           );

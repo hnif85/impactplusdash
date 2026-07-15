@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
-import { averageRating, quizScore, delta, type ScoringAnswer } from "@/lib/surveys/scoring";
+import { averageRating, quizScore, delta, ratingSpec, type ScoringAnswer, type RatingSpec } from "@/lib/surveys/scoring";
 import { eventDays } from "@/lib/attendance";
 import { isUuid } from "@/lib/uuid";
 
@@ -183,16 +183,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
         const { data: questions, error: questionsError } = await supabase
           .from("survey_questions")
-          .select("id, survey_id, question_type, correct_answer, question_text, options, order_index")
+          .select("id, survey_id, question_type, correct_answer, question_text, options, order_index, rating_scale")
           .in("survey_id", surveyIds)
           .order("order_index", { ascending: true });
         if (questionsError) throw new Error(questionsError.message);
 
         // Pre/post carry no answer key, so the only number comparable between
-        // them is the shared set of 1-5 rating questions. The quiz is the only
-        // survey that is actually scored against a key.
-        const ratingQ = new Set(
-          (questions ?? []).filter((q) => q.question_type === "rating").map((q) => q.id)
+        // them is the shared set of rating questions. Their rating_scale decides
+        // direction: a reverse-coded one is flipped before averaging.
+        const ratingQ = new Map<string, RatingSpec>(
+          (questions ?? [])
+            .filter((q) => q.question_type === "rating")
+            .map((q) => [q.id, ratingSpec(q.rating_scale)])
         );
         const keyFor = (surveyId: string | null) => {
           const m = new Map<string, string>();

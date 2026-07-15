@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
-import { averageRating, round1 } from "@/lib/surveys/scoring";
+import { averageRating, round1, ratingSpec, normaliseRating, type RatingSpec } from "@/lib/surveys/scoring";
 
 const JWT_SECRET = process.env.IMPACT_LINK_SECRET!;
 const supabase = createClient(
@@ -35,6 +35,7 @@ type QuestionRow = {
   question_type: string;
   options: unknown;
   order_index: number;
+  rating_scale: unknown;
 };
 
 type AnswerRow = {
@@ -58,7 +59,13 @@ function summarise(q: QuestionRow, answers: AnswerRow[], respondents: number): S
   const options = Array.isArray(q.options) ? (q.options as string[]) : [];
 
   if (q.question_type === "rating" || q.question_type === "nps") {
-    const vals = answers.map((a) => Number(a.answer_value)).filter((v) => Number.isFinite(v) && v > 0);
+    // Normalised so this average points the same way as the headline score;
+    // showing one raw and the other flipped would contradict itself on screen.
+    const spec = ratingSpec(q.rating_scale);
+    const vals = answers
+      .map((a) => Number(a.answer_value))
+      .filter((v) => Number.isFinite(v) && v > 0)
+      .map((v) => normaliseRating(v, spec));
     return {
       total_answers: vals.length,
       average: vals.length ? round1(vals.reduce((x, y) => x + y, 0) / vals.length) : null,
@@ -172,7 +179,7 @@ export async function GET(req: NextRequest) {
 
     const { data: questions, error: questionsError } = await supabase
       .from("survey_questions")
-      .select("id, survey_id, question_text, question_type, options, order_index")
+      .select("id, survey_id, question_text, question_type, options, order_index, rating_scale")
       .in("survey_id", surveyIds)
       .order("order_index", { ascending: true });
     if (questionsError) throw new Error(questionsError.message);
@@ -215,6 +222,11 @@ export async function GET(req: NextRequest) {
         order_index: order,
         text: ref.question_text,
         type: ref.question_type,
+        // Profile questions live only in Pre. Without this the UI would draw an
+        // empty Post bar, which reads as "everyone stopped answering".
+        in_pre: Boolean(p),
+        in_post: Boolean(s),
+        reversed: ref.question_type === "rating" && ratingSpec(ref.rating_scale).reverse,
         pre,
         post,
         delta: pre.average !== null && post.average !== null ? round1(post.average - pre.average) : null,
@@ -224,7 +236,10 @@ export async function GET(req: NextRequest) {
     // Overall program score: the same rating average used per participant, so the
     // headline and the per-user table can never disagree.
     const ratingIdsFor = (surveyId: string | null) =>
-      new Set(qs.filter((q) => q.survey_id === surveyId && q.question_type === "rating").map((q) => q.id));
+      new Map<string, RatingSpec>(
+        qs.filter((q) => q.survey_id === surveyId && q.question_type === "rating")
+          .map((q) => [q.id, ratingSpec(q.rating_scale)])
+      );
     const overallFor = (surveyId: string | null) => {
       if (!surveyId) return null;
       const ratingIds = ratingIdsFor(surveyId);
