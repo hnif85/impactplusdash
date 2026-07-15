@@ -184,11 +184,11 @@ export default function EventDetailPage() {
           value={stats.attended}
           label={eventDays.length > 1 ? `Peserta hadir (${eventDays.length} hari)` : "Hadir"}
         />
-        <StatCard value={stats.pre} label="Isi Pre" />
-        <StatCard value={stats.post} label="Isi Post" />
+        <StatCard value={stats.pre} label="Isi kondisi awal" />
+        <StatCard value={stats.post} label="Isi kondisi akhir" />
         <StatCard
           value={stats.avgDelta === null ? "-" : `${stats.avgDelta > 0 ? "+" : ""}${stats.avgDelta}`}
-          label="Rata-rata Δ"
+          label="Δ kondisi usaha"
           tone={stats.avgDelta === null ? "neutral" : stats.avgDelta > 0 ? "up" : stats.avgDelta < 0 ? "down" : "neutral"}
         />
       </div>
@@ -196,33 +196,43 @@ export default function EventDetailPage() {
       {eventDays.length > 1 && (
         <p className="text-[11px] text-zinc-500">
           Event {eventDays.length} hari ({eventDays[0]} — {eventDays[eventDays.length - 1]}).
-          Peserta absen tiap hari; survey Pre &amp; Post tetap sekali isi.
+          Peserta absen tiap hari; survey tetap sekali isi.
           Kolom Hadir menunjukkan berapa hari mereka datang.
         </p>
       )}
 
       {/* A configuration state, not a failure - so it is reported in neutral
-          ink, and named on the company, since that is where pre/post live. */}
+          ink, and named on the company, since that is where these surveys live. */}
       {!loading && !hasProgramSurvey && (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-zinc-400">
           <span className="font-semibold text-zinc-300">
-            {companyName ?? "Perusahaan ini"} belum punya survey Pre/Post program.
+            {companyName ?? "Perusahaan ini"} belum punya survey Kondisi Usaha.
           </span>{" "}
-          Kolom Pre, Post, dan Δ akan kosong sampai keduanya diatur — dan itu berlaku untuk
-          semua event perusahaan ini, bukan cuma event ini. Atur{" "}
-          <span className="font-mono text-xs text-zinc-300">metadata.program_pre_survey_id</span> dan{" "}
-          <span className="font-mono text-xs text-zinc-300">program_post_survey_id</span> pada perusahaan.
+          Kolom Kondisi Usaha akan kosong sampai survey awal &amp; akhir diatur — berlaku untuk
+          semua event perusahaan ini, bukan cuma event ini. Kolom Pengetahuan tidak terpengaruh.
         </div>
       )}
 
-      {hasProgramSurvey && (
-        <p className="text-xs text-zinc-500">
-          Pre &amp; Post = rata-rata pertanyaan rating (skala 1-5).
-          {surveyMeta.pre && <> Pre: <span className="text-zinc-400">{surveyMeta.pre}</span>.</>}
-          {surveyMeta.post && <> Post: <span className="text-zinc-400">{surveyMeta.post}</span>.</>}
-          {surveyMeta.quiz && quizTotal > 0 && <> Kuis: <span className="text-zinc-400">{surveyMeta.quiz}</span> ({quizTotal} soal).</>}
-        </p>
-      )}
+      {/* Two different measures share this table, so each is spelled out. The
+          words "Pre/Post" are deliberately absent: they meant one thing for the
+          rating survey and another for the quiz, and readers kept mixing them. */}
+      <div className="space-y-1 text-xs text-zinc-500">
+        {hasProgramSurvey && (
+          <p>
+            <span className="font-semibold text-zinc-400">Kondisi Usaha</span> = penilaian diri peserta,
+            rata-rata pertanyaan rating skala 1-5.
+            {surveyMeta.pre && <> Awal: <span className="text-zinc-400">{surveyMeta.pre}</span>.</>}
+            {surveyMeta.post && <> Akhir: <span className="text-zinc-400">{surveyMeta.post}</span>.</>}
+          </p>
+        )}
+        {surveyMeta.quiz && quizTotal > 0 && (
+          <p>
+            <span className="font-semibold text-zinc-400">Pengetahuan</span> = % jawaban benar dari{" "}
+            {quizTotal} soal berkunci. Awal: <span className="text-zinc-400">{surveyMeta.quiz}</span>
+            {surveyMeta.quiz_post && <>. Akhir: <span className="text-zinc-400">{surveyMeta.quiz_post}</span></>}.
+          </p>
+        )}
+      </div>
 
       {loading && <p className="text-sm text-zinc-400">Memuat data peserta...</p>}
       {error && <p className="text-sm text-red-300">{error}</p>}
@@ -238,14 +248,23 @@ export default function EventDetailPage() {
           {/* Desktop */}
           <div className="hidden overflow-x-auto rounded-2xl border border-white/10 md:block">
             <table className="w-full text-sm">
+              {/* Grouped header: the two measures are different things, so the
+                  eye should not have to remember which "Pre" is which. */}
               <thead className="bg-white/5">
-                <tr className="text-left text-xs uppercase tracking-wider text-zinc-400">
-                  <th className="px-4 py-3">Nama / Email</th>
-                  <th className="px-4 py-3">Hadir</th>
-                  <th className="px-4 py-3 text-right">Pre</th>
-                  <th className="px-4 py-3 text-right">Post</th>
-                  <th className="px-4 py-3 text-right">Δ</th>
-                  <th className="px-4 py-3 text-right">Kuis</th>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
+                  <th className="px-4 pt-3" rowSpan={2}>Nama / Email</th>
+                  <th className="px-4 pt-3" rowSpan={2}>Hadir</th>
+                  <th className="border-l border-white/5 px-4 pt-3 text-center" colSpan={3}>
+                    Kondisi Usaha <span className="normal-case text-zinc-600">(skala 1-5)</span>
+                  </th>
+                  <th className="border-l border-white/5 px-4 pt-3 text-right" rowSpan={2}>
+                    Pengetahuan <span className="normal-case text-zinc-600">(% benar)</span>
+                  </th>
+                </tr>
+                <tr className="text-xs uppercase tracking-wider text-zinc-400">
+                  <th className="border-l border-white/5 px-4 pb-3 pt-1 text-right font-medium">Awal</th>
+                  <th className="px-4 pb-3 pt-1 text-right font-medium">Akhir</th>
+                  <th className="px-4 pb-3 pt-1 text-right font-medium">Δ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -260,10 +279,10 @@ export default function EventDetailPage() {
                     <td className="px-4 py-3">
                       <Attendance row={r} days={eventDays} />
                     </td>
-                    <td className="px-4 py-3 text-right"><Score value={r.pre} /></td>
+                    <td className="border-l border-white/5 px-4 py-3 text-right"><Score value={r.pre} /></td>
                     <td className="px-4 py-3 text-right"><Score value={r.post} /></td>
                     <td className="px-4 py-3 text-right"><Delta value={r.delta} /></td>
-                    <td className="px-4 py-3 text-right"><Quiz row={r} total={quizTotal} /></td>
+                    <td className="border-l border-white/5 px-4 py-3 text-right"><Quiz row={r} total={quizTotal} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -281,11 +300,17 @@ export default function EventDetailPage() {
                   </div>
                   <Attendance row={r} days={eventDays} />
                 </div>
-                <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                  <MiniStat label="Pre"><Score value={r.pre} /></MiniStat>
-                  <MiniStat label="Post"><Score value={r.post} /></MiniStat>
-                  <MiniStat label="Δ"><Delta value={r.delta} /></MiniStat>
-                  <MiniStat label="Kuis"><Quiz row={r} total={quizTotal} /></MiniStat>
+                <div className="mt-3">
+                  <p className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Kondisi usaha (1-5)</p>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <MiniStat label="Awal"><Score value={r.pre} /></MiniStat>
+                    <MiniStat label="Akhir"><Score value={r.post} /></MiniStat>
+                    <MiniStat label="Δ"><Delta value={r.delta} /></MiniStat>
+                  </div>
+                  <p className="mb-1 mt-2 text-[9px] uppercase tracking-wider text-zinc-600">Pengetahuan (% benar)</p>
+                  <div className="rounded-xl border border-white/5 bg-white/5 px-2 py-2 text-center">
+                    <Quiz row={r} total={quizTotal} />
+                  </div>
                 </div>
               </article>
             ))}
