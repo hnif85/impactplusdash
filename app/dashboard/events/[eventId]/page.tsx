@@ -75,7 +75,6 @@ export default function EventDetailPage() {
     program_post: string | null;
   }>({ event_post: null, event_post_title: null, program_post: null });
   const [eventName, setEventName] = useState("");
-  const [companyName, setCompanyName] = useState<string | null>(null);
   const [eventDays, setEventDays] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +102,6 @@ export default function EventDetailPage() {
         setProfileBreakdown(data.profile_breakdown ?? []);
         setLinks(data.links ?? { event_post: null, event_post_title: null, program_post: null });
         setEventName(data.event_name ?? "");
-        setCompanyName(data.company_name ?? null);
         setEventDays(data.event_days ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Terjadi kesalahan.");
@@ -115,19 +113,19 @@ export default function EventDetailPage() {
   // Lazy initialiser rather than an effect: no extra render, SSR-guarded.
   const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
 
+  // Event-scoped only. The Kondisi Usaha numbers describe the whole programme
+  // and live on /dashboard/surveys.
   const stats = useMemo(() => {
-    const deltas = rows.map((r) => r.delta).filter((d): d is number => d !== null);
+    const deltas = rows.map((r) => r.quiz_delta).filter((d): d is number => d !== null);
     return {
       attended: rows.filter((r) => r.attended).length,
-      pre: rows.filter((r) => r.pre !== null).length,
-      post: rows.filter((r) => r.post !== null).length,
-      avgDelta: deltas.length > 0
-        ? Math.round((deltas.reduce((a, b) => a + b, 0) / deltas.length) * 10) / 10
+      quizPre: rows.filter((r) => r.quiz_pre !== null).length,
+      quizPost: rows.filter((r) => r.quiz_post !== null).length,
+      avgQuizDelta: deltas.length > 0
+        ? Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length)
         : null,
     };
   }, [rows]);
-
-  const hasProgramSurvey = Boolean(surveyMeta.pre || surveyMeta.post);
 
   return (
     <div className="space-y-6">
@@ -184,12 +182,12 @@ export default function EventDetailPage() {
           value={stats.attended}
           label={eventDays.length > 1 ? `Peserta hadir (${eventDays.length} hari)` : "Hadir"}
         />
-        <StatCard value={stats.pre} label="Isi kondisi awal" />
-        <StatCard value={stats.post} label="Isi kondisi akhir" />
+        <StatCard value={stats.quizPre} label="Isi kuis awal" />
+        <StatCard value={stats.quizPost} label="Isi kuis akhir" />
         <StatCard
-          value={stats.avgDelta === null ? "-" : `${stats.avgDelta > 0 ? "+" : ""}${stats.avgDelta}`}
-          label="Δ kondisi usaha"
-          tone={stats.avgDelta === null ? "neutral" : stats.avgDelta > 0 ? "up" : stats.avgDelta < 0 ? "down" : "neutral"}
+          value={stats.avgQuizDelta === null ? "-" : `${stats.avgQuizDelta > 0 ? "+" : ""}${stats.avgQuizDelta}pp`}
+          label="Δ pengetahuan"
+          tone={stats.avgQuizDelta === null ? "neutral" : stats.avgQuizDelta > 0 ? "up" : stats.avgQuizDelta < 0 ? "down" : "neutral"}
         />
       </div>
 
@@ -201,30 +199,7 @@ export default function EventDetailPage() {
         </p>
       )}
 
-      {/* A configuration state, not a failure - so it is reported in neutral
-          ink, and named on the company, since that is where these surveys live. */}
-      {!loading && !hasProgramSurvey && (
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-zinc-400">
-          <span className="font-semibold text-zinc-300">
-            {companyName ?? "Perusahaan ini"} belum punya survey Kondisi Usaha.
-          </span>{" "}
-          Kolom Kondisi Usaha akan kosong sampai survey awal &amp; akhir diatur — berlaku untuk
-          semua event perusahaan ini, bukan cuma event ini. Kolom Pengetahuan tidak terpengaruh.
-        </div>
-      )}
-
-      {/* Two different measures share this table, so each is spelled out. The
-          words "Pre/Post" are deliberately absent: they meant one thing for the
-          rating survey and another for the quiz, and readers kept mixing them. */}
       <div className="space-y-1 text-xs text-zinc-500">
-        {hasProgramSurvey && (
-          <p>
-            <span className="font-semibold text-zinc-400">Kondisi Usaha</span> = penilaian diri peserta,
-            rata-rata pertanyaan rating skala 1-5.
-            {surveyMeta.pre && <> Awal: <span className="text-zinc-400">{surveyMeta.pre}</span>.</>}
-            {surveyMeta.post && <> Akhir: <span className="text-zinc-400">{surveyMeta.post}</span>.</>}
-          </p>
-        )}
         {surveyMeta.quiz && quizTotal > 0 && (
           <p>
             <span className="font-semibold text-zinc-400">Pengetahuan</span> = % jawaban benar dari{" "}
@@ -232,6 +207,14 @@ export default function EventDetailPage() {
             {surveyMeta.quiz_post && <>. Akhir: <span className="text-zinc-400">{surveyMeta.quiz_post}</span></>}.
           </p>
         )}
+        <p>
+          Kondisi usaha peserta (Baseline &amp; Endline) berlaku untuk seluruh program, bukan per event —
+          lihat di{" "}
+          <Link href="/dashboard/surveys" className="font-semibold text-emerald-400 hover:text-emerald-300">
+            Hasil Survey
+          </Link>
+          .
+        </p>
       </div>
 
       {loading && <p className="text-sm text-zinc-400">Memuat data peserta...</p>}
@@ -248,23 +231,17 @@ export default function EventDetailPage() {
           {/* Desktop */}
           <div className="hidden overflow-x-auto rounded-2xl border border-white/10 md:block">
             <table className="w-full text-sm">
-              {/* Grouped header: the two measures are different things, so the
-                  eye should not have to remember which "Pre" is which. */}
+              {/* Only event-scoped measures live here. Kondisi Usaha comes from
+                  the company's Baseline/Endline and describes the whole
+                  programme, so it belongs on /dashboard/surveys - showing it per
+                  event implied it was this event's number. */}
               <thead className="bg-white/5">
-                <tr className="text-left text-[10px] uppercase tracking-wider text-zinc-500">
-                  <th className="px-4 pt-3" rowSpan={2}>Nama / Email</th>
-                  <th className="px-4 pt-3" rowSpan={2}>Hadir</th>
-                  <th className="border-l border-white/5 px-4 pt-3 text-center" colSpan={3}>
-                    Kondisi Usaha <span className="normal-case text-zinc-600">(skala 1-5)</span>
+                <tr className="text-left text-xs uppercase tracking-wider text-zinc-400">
+                  <th className="px-4 py-3">Nama / Email</th>
+                  <th className="px-4 py-3">Hadir</th>
+                  <th className="px-4 py-3 text-right">
+                    Pengetahuan <span className="text-[10px] normal-case text-zinc-600">(% benar)</span>
                   </th>
-                  <th className="border-l border-white/5 px-4 pt-3 text-right" rowSpan={2}>
-                    Pengetahuan <span className="normal-case text-zinc-600">(% benar)</span>
-                  </th>
-                </tr>
-                <tr className="text-xs uppercase tracking-wider text-zinc-400">
-                  <th className="border-l border-white/5 px-4 pb-3 pt-1 text-right font-medium">Awal</th>
-                  <th className="px-4 pb-3 pt-1 text-right font-medium">Akhir</th>
-                  <th className="px-4 pb-3 pt-1 text-right font-medium">Δ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -279,10 +256,7 @@ export default function EventDetailPage() {
                     <td className="px-4 py-3">
                       <Attendance row={r} days={eventDays} />
                     </td>
-                    <td className="border-l border-white/5 px-4 py-3 text-right"><Score value={r.pre} /></td>
-                    <td className="px-4 py-3 text-right"><Score value={r.post} /></td>
-                    <td className="px-4 py-3 text-right"><Delta value={r.delta} /></td>
-                    <td className="border-l border-white/5 px-4 py-3 text-right"><Quiz row={r} total={quizTotal} /></td>
+                    <td className="px-4 py-3 text-right"><Quiz row={r} total={quizTotal} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -301,13 +275,7 @@ export default function EventDetailPage() {
                   <Attendance row={r} days={eventDays} />
                 </div>
                 <div className="mt-3">
-                  <p className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Kondisi usaha (1-5)</p>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <MiniStat label="Awal"><Score value={r.pre} /></MiniStat>
-                    <MiniStat label="Akhir"><Score value={r.post} /></MiniStat>
-                    <MiniStat label="Δ"><Delta value={r.delta} /></MiniStat>
-                  </div>
-                  <p className="mb-1 mt-2 text-[9px] uppercase tracking-wider text-zinc-600">Pengetahuan (% benar)</p>
+                  <p className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Pengetahuan (% benar)</p>
                   <div className="rounded-xl border border-white/5 bg-white/5 px-2 py-2 text-center">
                     <Quiz row={r} total={quizTotal} />
                   </div>
@@ -623,15 +591,6 @@ function StatCard({ value, label, tone = "neutral" }: { value: number | string; 
   );
 }
 
-function MiniStat({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-white/5 bg-white/5 px-2 py-2">
-      <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
-      <div className="mt-0.5 text-sm">{children}</div>
-    </div>
-  );
-}
-
 /**
  * Single-day events read as Ya/Tidak; multi-day ones report coverage, because
  * "hadir" alone hides someone who only showed up on day 1.
@@ -691,28 +650,6 @@ function Pill({ tone, children }: { tone: "up" | "neutral"; children: React.Reac
     </span>
   );
 }
-
-function Score({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-zinc-600">-</span>;
-  return (
-    <span className="font-semibold text-white">
-      {value}
-      <span className="text-xs font-normal text-zinc-500">/5</span>
-    </span>
-  );
-}
-
-function Delta({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-zinc-600">-</span>;
-  if (value === 0) return <span className="font-semibold text-zinc-400">0</span>;
-  const up = value > 0;
-  return (
-    <span className={`font-semibold ${up ? "text-emerald-400" : "text-red-400"}`}>
-      {up ? "▲" : "▼"} {up ? "+" : ""}{value}
-    </span>
-  );
-}
-
 const quizColor = (pct: number) =>
   pct >= 80 ? "text-emerald-400" : pct >= 50 ? "text-amber-300" : "text-red-400";
 
