@@ -116,6 +116,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       pre: QuizSide | null; post: QuizSide | null; delta: number | null;
     }[] = [];
 
+    /**
+     * Questions on the event survey with no answer key. They cannot be scored,
+     * but they are the only record of how participants actually work and what
+     * they said - profiling, not marking. Without this they were collected and
+     * then shown nowhere.
+     */
+    type ProfileSide =
+      | { kind: "choice"; answered: number; options: { label: string; count: number; pct: number }[] }
+      | { kind: "text"; answered: number; answers: string[] };
+    let profileBreakdown: {
+      order_index: number; text: string; type: string;
+      // Whether the question is ASKED in each sitting - distinct from whether
+      // anyone has answered yet. Conflating the two tells the reader a question
+      // was never asked when the post round simply has not started.
+      in_pre: boolean; in_post: boolean;
+      pre: ProfileSide | null; post: ProfileSide | null;
+    }[] = [];
+
     const rows = new Map<string, ScoreRow>();
     const blank = (key: string, guid: string | null, email: string, name: string): ScoreRow => ({
       key, customer_guid: guid, email, full_name: name,
@@ -226,13 +244,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           byResponse.set(a.response_id, list);
         }
 
+        // Both the scored and the unscored breakdowns read from this.
+        const byQuestion = new Map<string, AnswerRow[]>();
+        for (const a of answers) {
+          const list = byQuestion.get(a.question_id) ?? [];
+          list.push(a);
+          byQuestion.set(a.question_id, list);
+        }
+
         if (answerKeyPre.size > 0 || answerKeyPost.size > 0) {
-          const byQuestion = new Map<string, AnswerRow[]>();
-          for (const a of answers) {
-            const list = byQuestion.get(a.question_id) ?? [];
-            list.push(a);
-            byQuestion.set(a.question_id, list);
-          }
 
           const sideFor = (q: { id: string; options: unknown; correct_answer: string | null }): QuizSide | null => {
             const list = byQuestion.get(q.id) ?? [];
@@ -282,6 +302,52 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             // Weakest current state first: the material still needing work leads.
             .sort((a, b) => (a.post?.pct ?? a.pre?.pct ?? 0) - (b.post?.pct ?? b.pre?.pct ?? 0));
         }
+
+        // --- unscored questions: profiling ---
+        const profileSide = (q: { id: string; question_type: string; options: unknown }): ProfileSide | null => {
+          const list = byQuestion.get(q.id) ?? [];
+          if (list.length === 0) return null;
+
+          if (q.question_type === "text") {
+            const answers = list.map((a) => (a.answer_text ?? "").trim()).filter(Boolean);
+            return answers.length ? { kind: "text", answered: answers.length, answers } : null;
+          }
+
+          const opts = Array.isArray(q.options) ? (q.options as string[]) : [];
+          const counts = new Map<string, number>(opts.map((o) => [o, 0]));
+          let other = 0;
+          for (const a of list) {
+            const v = a.answer_text ?? (Array.isArray(a.selected_options) ? (a.selected_options as string[])[0] : null);
+            if (v && counts.has(v)) counts.set(v, counts.get(v)! + 1);
+            else if (v) other += 1;
+          }
+          const base = list.length;
+          const options = [...counts].map(([label, count]) => ({ label, count, pct: Math.round((count / base) * 100) }));
+          if (other > 0) options.push({ label: "Lainnya", count: other, pct: Math.round((other / base) * 100) });
+          return { kind: "choice", answered: base, options };
+        };
+
+        const unkeyed = (sid: string | null) =>
+          (questions ?? []).filter((q) => q.survey_id === sid && !q.correct_answer);
+        const preU = unkeyed(quizPreId);
+        const postU = unkeyed(quizPostId);
+        const postUByOrder = new Map(postU.map((q) => [q.order_index, q]));
+        const uOrders = [...new Set([...preU.map((q) => q.order_index), ...postU.map((q) => q.order_index)])].sort((a, b) => a - b);
+
+        profileBreakdown = uOrders.map((order) => {
+          const p = preU.find((q) => q.order_index === order);
+          const s = postUByOrder.get(order);
+          const ref = p ?? s!;
+          return {
+            order_index: order,
+            text: ref.question_text,
+            type: ref.question_type,
+            in_pre: Boolean(p),
+            in_post: Boolean(s),
+            pre: p ? profileSide(p) : null,
+            post: s ? profileSide(s) : null,
+          };
+        }).filter((q) => q.pre || q.post);
 
         // Name/email for people who answered but never checked in.
         const answeredGuids = [...new Set((responses ?? []).map((r) => r.customer_guid).filter(Boolean))] as string[];
@@ -352,6 +418,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       survey_meta: surveyMeta,
       quiz_total: quizTotal,
       quiz_breakdown: quizBreakdown,
+      profile_breakdown: profileBreakdown,
       rating_scale_max: 5,
       // Post-survey links are shared with participants; they open the public
       // page that asks for an email first.

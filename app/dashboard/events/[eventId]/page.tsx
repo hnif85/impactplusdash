@@ -38,6 +38,21 @@ type QuizQuestion = {
   delta: number | null;
 };
 
+type ProfileSide =
+  | { kind: "choice"; answered: number; options: { label: string; count: number; pct: number }[] }
+  | { kind: "text"; answered: number; answers: string[] };
+
+type ProfileQuestion = {
+  order_index: number;
+  text: string;
+  type: string;
+  /** Asked in that sitting — not the same as answered yet. */
+  in_pre: boolean;
+  in_post: boolean;
+  pre: ProfileSide | null;
+  post: ProfileSide | null;
+};
+
 // Data encoding, not chrome: correct is the point, distractors are context.
 // Validated on the dark surface (CVD deutan dE 16.9 vs the gray).
 const CORRECT_COLOR = "#059669";
@@ -53,6 +68,7 @@ export default function EventDetailPage() {
   const [surveyMeta, setSurveyMeta] = useState<SurveyMeta>({ pre: null, post: null, quiz: null, quiz_post: null });
   const [quizTotal, setQuizTotal] = useState(0);
   const [quizBreakdown, setQuizBreakdown] = useState<QuizQuestion[]>([]);
+  const [profileBreakdown, setProfileBreakdown] = useState<ProfileQuestion[]>([]);
   const [links, setLinks] = useState<{
     event_post: string | null;
     event_post_title: string | null;
@@ -84,6 +100,7 @@ export default function EventDetailPage() {
         setSurveyMeta(data.survey_meta ?? { pre: null, post: null, quiz: null, quiz_post: null });
         setQuizTotal(data.quiz_total ?? 0);
         setQuizBreakdown(data.quiz_breakdown ?? []);
+        setProfileBreakdown(data.profile_breakdown ?? []);
         setLinks(data.links ?? { event_post: null, event_post_title: null, program_post: null });
         setEventName(data.event_name ?? "");
         setCompanyName(data.company_name ?? null);
@@ -277,6 +294,162 @@ export default function EventDetailPage() {
       )}
 
       {quizBreakdown.length > 0 && <QuizAnalysis questions={quizBreakdown} meta={surveyMeta} />}
+      {profileBreakdown.length > 0 && <ProfileAnalysis questions={profileBreakdown} />}
+    </div>
+  );
+}
+
+/**
+ * The unscored half of the event survey. These questions have no right answer,
+ * so they never belong in the quiz analysis - but they are the only record of
+ * how participants actually work and what they asked for.
+ */
+function ProfileAnalysis({ questions }: { questions: ProfileQuestion[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+      <h3 className="text-sm font-semibold text-white">Profil &amp; Masukan Peserta</h3>
+      <p className="mb-4 text-xs text-zinc-500">
+        Pertanyaan tanpa kunci jawaban — tidak dinilai benar/salah, tapi inilah potret kondisi
+        dan suara peserta.
+      </p>
+
+      <div className="space-y-3">
+        {questions.map((q) => {
+          const isOpen = open === q.order_index;
+          const side = q.pre ?? q.post;
+          if (!side) return null;
+
+          return (
+            <div key={q.order_index} className="rounded-xl border border-white/5 bg-white/5 p-3">
+              <button onClick={() => setOpen(isOpen ? null : q.order_index)} className="w-full text-left">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 break-words text-xs text-zinc-300">
+                    {q.order_index}. {q.text}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-zinc-500">
+                    {side.answered} jawaban
+                    {q.in_post
+                      ? q.post
+                        ? " · Pre & Post"
+                        : " · Post belum diisi"
+                      : " · hanya di Pre"}
+                    <span className="ml-2 text-zinc-600">{isOpen ? "tutup" : "lihat"}</span>
+                  </span>
+                </div>
+
+                {/* A choice question is worth showing collapsed: the distribution
+                    IS the profile. Free text needs opening. */}
+                {side.kind === "choice" && !isOpen && (
+                  <div className="mt-2 space-y-[2px]">
+                    {side.options.filter((o) => o.count > 0).slice(0, 3).map((o) => (
+                      <div key={o.label} className="flex items-center gap-2">
+                        <span className="w-40 shrink-0 truncate text-[10px] text-zinc-500">{o.label}</span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-sm bg-zinc-900">
+                          <div className="h-full rounded-r-[4px]" style={{ width: `${Math.max(o.pct, 0.5)}%`, background: WRONG_COLOR }} />
+                        </div>
+                        <span className="w-10 shrink-0 text-right text-[10px] tabular-nums text-zinc-600">{o.pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </button>
+
+              {isOpen && (
+                <div className="mt-3 border-t border-white/5 pt-3">
+                  {side.kind === "choice" ? (
+                    <ChoiceProfile pre={q.pre} post={q.post} />
+                  ) : (
+                    <TextProfile pre={q.pre} post={q.post} />
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ChoiceProfile({ pre, post }: { pre: ProfileSide | null; post: ProfileSide | null }) {
+  if (pre?.kind !== "choice" && post?.kind !== "choice") return null;
+  const labels = [...new Set([
+    ...(pre?.kind === "choice" ? pre.options.map((o) => o.label) : []),
+    ...(post?.kind === "choice" ? post.options.map((o) => o.label) : []),
+  ])];
+  const find = (s: ProfileSide | null, l: string) =>
+    s?.kind === "choice" ? s.options.find((o) => o.label === l) ?? null : null;
+  const hasPost = post?.kind === "choice";
+
+  return (
+    <div className="space-y-3">
+      {hasPost && (
+        <p className="text-[10px] uppercase tracking-wider text-zinc-600">Abu-abu = sebelum · Hijau = sesudah</p>
+      )}
+      {labels.map((label) => {
+        const p = find(pre, label);
+        const s = find(post, label);
+        const d = p && s ? s.pct - p.pct : null;
+        return (
+          <div key={label}>
+            <div className="mb-1 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 break-words text-[11px] text-zinc-400">{label}</span>
+              <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
+                {p?.pct ?? 0}% <span className="text-zinc-700">({p?.count ?? 0})</span>
+                {d !== null && (
+                  <span className={`ml-2 font-semibold ${d > 0 ? "text-emerald-400" : d < 0 ? "text-red-400" : "text-zinc-600"}`}>
+                    {d > 0 ? "▲ +" : d < 0 ? "▼ " : ""}{d}pp
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="space-y-[2px]">
+              <QuizBar pct={p?.pct ?? 0} color={hasPost ? WRONG_COLOR : CORRECT_COLOR} thin />
+              {hasPost && <QuizBar pct={s?.pct ?? 0} color={CORRECT_COLOR} thin />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const TEXT_PREVIEW = 8;
+
+function TextProfile({ pre, post }: { pre: ProfileSide | null; post: ProfileSide | null }) {
+  const [all, setAll] = useState(false);
+  const list = (s: ProfileSide | null, label: string) => {
+    if (s?.kind !== "text") return null;
+    const shown = all ? s.answers : s.answers.slice(0, TEXT_PREVIEW);
+    return (
+      <div>
+        {post && <p className="mb-1.5 text-[10px] uppercase tracking-wider text-zinc-600">{label}</p>}
+        <div className="space-y-1">
+          {shown.map((a, i) => (
+            <p key={i} className="rounded-lg bg-zinc-900 px-3 py-2 text-[11px] leading-relaxed text-zinc-300">
+              &ldquo;{a}&rdquo;
+            </p>
+          ))}
+        </div>
+        {s.answers.length > TEXT_PREVIEW && (
+          <button
+            onClick={() => setAll((v) => !v)}
+            className="mt-2 text-[11px] font-semibold text-emerald-400 transition hover:text-emerald-300"
+          >
+            {all ? "Tampilkan lebih sedikit" : `Lihat semua (${s.answers.length})`}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  if (!post) return list(pre, "Pre");
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {list(pre, "Pre")}
+      {list(post, "Post")}
     </div>
   );
 }
