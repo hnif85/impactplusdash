@@ -6,8 +6,8 @@ import {
   localToday,
 } from "@/lib/attendance";
 import { fetchQuestions } from "@/lib/surveyPublic";
+import { isUuid } from "@/lib/uuid";
 
-const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 const answerSchema = z.object({
   questionId: z.string().min(1),

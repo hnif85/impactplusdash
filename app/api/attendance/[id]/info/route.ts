@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getEvent, getCompanyRef } from "@/lib/attendance";
+import { isUuid } from "@/lib/uuid";
 
-const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

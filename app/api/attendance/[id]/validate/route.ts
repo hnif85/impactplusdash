@@ -4,8 +4,8 @@ import {
   getEvent, getCompanyRef, findCustomerByEmailAndRef, pendingPreSurveys,
   attendedDates, hasAttendedOn, localToday, eventDays,
 } from "@/lib/attendance";
+import { isUuid } from "@/lib/uuid";
 
-const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 const schema = z.object({ email: z.string().email() });
 

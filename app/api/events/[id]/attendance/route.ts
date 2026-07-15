@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import jwt from "jsonwebtoken";
 import { averageRating, quizScore, delta, type ScoringAnswer } from "@/lib/surveys/scoring";
 import { eventDays } from "@/lib/attendance";
+import { isUuid } from "@/lib/uuid";
 
 const JWT_SECRET = process.env.IMPACT_LINK_SECRET!;
 const supabase = createClient(
@@ -10,7 +11,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
 function getAuthUser(req: Request) {
   const authHeader = req.headers.get("authorization");
