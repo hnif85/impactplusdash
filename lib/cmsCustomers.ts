@@ -304,9 +304,36 @@ const toOptionsArray = (value: unknown): string[] => {
   return [];
 };
 
-const resolveBaselineSurveyId = async (): Promise<string | null> => {
+const resolveBaselineSurveyId = async (companyId?: string): Promise<string | null> => {
   if (BASELINE_SURVEY_ID) return BASELINE_SURVEY_ID;
-  // Cari survey berdasarkan judul tetap; fallback ke survey aktif terbaru jika tidak ada.
+
+  // Preferred: resolve the pre-survey configured on the customer's company.
+  // Live cohorts (e.g. Bontang Jul 2026) use their own survey rows, so a
+  // single hardcoded title cannot cover all companies.
+  if (companyId) {
+    const { data: company } = await supabase
+      .from("companies")
+      .select("metadata")
+      .eq("id", companyId)
+      .maybeSingle();
+    const meta = (company?.metadata as Record<string, unknown> | null) ?? {};
+    const preId = (meta.program_pre_survey_id as string | undefined) ?? null;
+    if (preId) return preId;
+
+    // Fallback within company: most recent training_event's pre-survey.
+    const { data: evt } = await supabase
+      .from("training_events")
+      .select("survey_id")
+      .eq("company_id", companyId)
+      .not("survey_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (evt?.survey_id) return evt.survey_id as string;
+  }
+
+  // Legacy fallback: exact title match (preserves previous behaviour for
+  // seeded "Baseline UMKM Feb 2026" cohorts that still rely on it).
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
     .select("id, title")
@@ -335,7 +362,7 @@ const resolveBaselineSurveyId = async (): Promise<string | null> => {
 };
 
 const computeSurveySummary = async (companyId?: string | null): Promise<SurveySummary | null> => {
-  const surveyId = await resolveBaselineSurveyId();
+  const surveyId = await resolveBaselineSurveyId(companyId ?? undefined);
   if (!surveyId) return null;
 
   const responseQuery = supabase
@@ -506,7 +533,6 @@ export async function getCampaignDashboard(
   productName: string = PRODUCT_NAME
 ): Promise<CampaignResult> {
   const targetProductKey = normalizeName(productName);
-  const baselineSurveyId = await resolveBaselineSurveyId();
 
   let companyName: string | null | undefined = null;
   const { data: company, error: companyError } = await supabase
@@ -516,6 +542,9 @@ export async function getCampaignDashboard(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Resolve baseline survey from the company's metadata (accurate per cohort).
+  const baselineSurveyId = await resolveBaselineSurveyId(company?.id as string | undefined);
 
   if (companyError) {
     throw new Error(`Failed to lookup company for referral code: ${companyError.message}`);
