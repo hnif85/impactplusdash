@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 export interface SurveyAnswer {
   question_id: string;
@@ -156,8 +156,120 @@ function ratingChipClass(score: number, reverse?: boolean): string {
   return "border-emerald-500/40 bg-emerald-900/40 text-emerald-200";
 }
 
+function renderFieldValue(field: FieldDef, surveyAnswers: SurveyAnswer[]): React.ReactNode {
+  const ans = resolveAnswer(surveyAnswers, field);
+
+  if (field.kind === "rating") {
+    const score = parseRating(ans);
+    if (score === null) return <span className="text-zinc-300">-</span>;
+    const chip = ratingChipClass(score, field.reverse);
+    const label = ratingLabel(score, field.max ?? 5, field.reverse);
+    return (
+      <span className="flex items-center gap-2">
+        <span className={`rounded-full border ${chip} px-2.5 py-1 text-sm font-bold tabular-nums`}>
+          {score}{field.suffix ?? ""}
+        </span>
+        <span className="text-xs text-zinc-300">{label}</span>
+      </span>
+    );
+  }
+
+  const value = renderTextValue(ans);
+  return <span className="text-sm font-medium text-white whitespace-pre-line break-words">{value}</span>;
+}
+
+function CategoryCard({
+  cat,
+  surveyAnswers,
+}: {
+  cat: CategoryDef;
+  surveyAnswers: SurveyAnswer[];
+}) {
+  const accent = ACCENT_CLASSES[cat.accent] ?? ACCENT_CLASSES.emerald;
+  return (
+    <div className={`rounded-2xl border ${accent.ring} bg-white/5 p-5 shadow-inner shadow-black/20`}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${accent.chipBg} border ${accent.chipBorder}`} />
+        <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">{cat.title}</h3>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {cat.fields.map((field) => {
+          const ans = resolveAnswer(surveyAnswers, field);
+
+          if (field.kind === "rating") {
+            const score = parseRating(ans);
+            const max = field.max ?? 5;
+            if (score === null) {
+              return (
+                <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
+                  <p className="text-sm font-medium text-white">-</p>
+                </div>
+              );
+            }
+            const chip = ratingChipClass(score, field.reverse);
+            const label = ratingLabel(score, max, field.reverse);
+            return (
+              <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-full border ${chip} px-2.5 py-1 text-sm font-bold tabular-nums`}>
+                    {score}{field.suffix ?? ""}
+                  </span>
+                  <span className="text-xs text-zinc-300">{label}</span>
+                </div>
+              </div>
+            );
+          }
+
+          const value = renderTextValue(ans);
+          return (
+            <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
+              <p className="text-sm font-medium text-white whitespace-pre-line break-words">{value}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DetailList({
+  cats,
+  surveyAnswers,
+}: {
+  cats: CategoryDef[];
+  surveyAnswers: SurveyAnswer[];
+}) {
+  return (
+    <div className="space-y-4">
+      {cats.map((cat) => {
+        const accent = ACCENT_CLASSES[cat.accent] ?? ACCENT_CLASSES.emerald;
+        return (
+          <div key={cat.title} className="space-y-2">
+            <div className="mb-1 flex items-center gap-2">
+              <span className={`inline-block h-2 w-2 rounded-full ${accent.chipBg} border ${accent.chipBorder}`} />
+              <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-300">{cat.title}</h4>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-zinc-950/40 divide-y divide-white/5">
+              {cat.fields.map((field) => (
+                <div key={field.label} className="flex items-start justify-between gap-4 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.08em] text-zinc-400 shrink-0">{field.label}</p>
+                  <div className="text-right">{renderFieldValue(field, surveyAnswers)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function BaselineSection({ surveyAnswers }: { surveyAnswers: SurveyAnswer[] }) {
   const hasAny = useMemo(() => surveyAnswers.length > 0, [surveyAnswers.length]);
+  const [showDetail, setShowDetail] = useState(false);
 
   if (!hasAny) {
     return (
@@ -173,6 +285,9 @@ export function BaselineSection({ surveyAnswers }: { surveyAnswers: SurveyAnswer
     );
   }
 
+  const main = CATEGORIES[0]; // Profil Usaha
+  const detail = CATEGORIES.slice(1);
+
   return (
     <section aria-label="Kuesioner Baseline" className="space-y-4">
       <div>
@@ -180,59 +295,19 @@ export function BaselineSection({ surveyAnswers }: { surveyAnswers: SurveyAnswer
         <h2 className="text-lg font-semibold text-white">Hasil Pre-Survey</h2>
       </div>
 
-      {CATEGORIES.map((cat) => {
-        const accent = ACCENT_CLASSES[cat.accent] ?? ACCENT_CLASSES.emerald;
-        return (
-          <div
-            key={cat.title}
-            className={`rounded-2xl border ${accent.ring} bg-white/5 p-5 shadow-inner shadow-black/20`}
-          >
-            <div className="mb-3 flex items-center gap-2">
-              <span className={`inline-block h-2.5 w-2.5 rounded-full ${accent.chipBg} border ${accent.chipBorder}`} />
-              <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">{cat.title}</h3>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {cat.fields.map((field) => {
-                const ans = resolveAnswer(surveyAnswers, field);
+      <CategoryCard cat={main} surveyAnswers={surveyAnswers} />
 
-                if (field.kind === "rating") {
-                  const score = parseRating(ans);
-                  const max = field.max ?? 5;
-                  if (score === null) {
-                    return (
-                      <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                        <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
-                        <p className="text-sm font-medium text-white">-</p>
-                      </div>
-                    );
-                  }
-                  const chip = ratingChipClass(score, field.reverse);
-                  const label = ratingLabel(score, max, field.reverse);
-                  return (
-                    <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
-                      <div className="flex items-center gap-2">
-                        <span className={`rounded-full border ${chip} px-2.5 py-1 text-sm font-bold tabular-nums`}>
-                          {score}{field.suffix ?? ""}
-                        </span>
-                        <span className="text-xs text-zinc-300">{label}</span>
-                      </div>
-                    </div>
-                  );
-                }
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowDetail((s) => !s)}
+          className="rounded-lg border border-white/20 bg-white/5 px-4 py-2 text-xs font-semibold text-zinc-200 transition hover:border-white/50 hover:bg-white/10 hover:text-white"
+        >
+          {showDetail ? "Sembunyikan Detail" : "Lihat Detail"}
+        </button>
+      </div>
 
-                const value = renderTextValue(ans);
-                return (
-                  <div key={field.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.12em] text-zinc-400">{field.label}</p>
-                    <p className="text-sm font-medium text-white whitespace-pre-line break-words">{value}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+      {showDetail && <DetailList cats={detail} surveyAnswers={surveyAnswers} />}
     </section>
   );
 }
