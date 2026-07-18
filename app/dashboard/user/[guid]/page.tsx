@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { BaselineSection } from "@/components/dashboard/BaselineSection";
 
 interface Profile {
   id: string;
@@ -190,25 +191,6 @@ export default function UserDetailPage() {
     profile?.phone ||
     renderAnswerValue(surveyPhone ?? { selected_options: [], answer_text: null, answer_value: null }) ||
     "-";
-
-  const pickAnswer = (...keywords: string[]) => {
-    const lower = keywords.map((k) => k.toLowerCase());
-    const found = surveyAnswers.find((ans) => {
-      const text = (ans.question_text || "").toLowerCase();
-      return lower.some((k) => text.includes(k));
-    });
-    return found ? renderAnswerValue(found) : "-";
-  };
-
-  const basicSurveyData = [
-    { label: "Brand", value: pickAnswer("brand kamu apa", "brand kamu") },
-    { label: "Jenis usaha", value: pickAnswer("jenis usaha") },
-    { label: "Kisaran omzet per bulan", value: pickAnswer("omzet", "kisar", "omset") },
-    { label: "Jumlah karyawan aktif", value: pickAnswer("jumlah karyawan") },
-    { label: "Lama usaha berjalan", value: pickAnswer("lama usaha") },
-    { label: "Platform promosi", value: pickAnswer("platform promosi") },
-    { label: "Metode pencatatan", value: pickAnswer("cara pencatatan") },
-  ];
 
   const answersNoTimestamp = surveyAnswers.filter(
     (ans) => !/timestamp/i.test(ans.question_text ?? "")
@@ -423,14 +405,11 @@ export default function UserDetailPage() {
                 {valueRow("Username", (profile?.username as string | null) ?? null)}
                 {valueRow("Phone / Whatsapp", phoneDisplay)}
                 {valueRow("Didaftarkan pada", formatDate(profile?.created_at ?? null))}
-                {basicSurveyData.map((item) => (
-                  <div key={item.label} className="flex flex-col gap-1 rounded-xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">{item.label}</p>
-                    <p className="text-sm font-medium text-white">{item.value || "-"}</p>
-                  </div>
-                ))}
               </div>
             </div>
+
+            {/* Kuesioner Baseline (Pre-Survey) - 21 field dikelompokkan per kategori */}
+            <BaselineSection surveyAnswers={surveyAnswers} />
 
             {/* Main Content: 2 col on large */}
             <div className="grid gap-6 lg:grid-cols-3">

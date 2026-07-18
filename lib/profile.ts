@@ -200,7 +200,7 @@ export async function getSurveyAnswersByGuid(guid: string): Promise<SurveyAnswer
   // optional: pelanggan dari jalur publik mungkin tidak punya app_user
 
   // 3) Cari survey baseline
-  const surveyId = await resolveBaselineSurveyId();
+  const surveyId = await resolveBaselineSurveyId(guid);
   if (!surveyId) return null;
 
   // 4) Ambil response: prioritaskan user_id, lalu fallback customer_guid
@@ -288,8 +288,60 @@ export async function getSurveyAnswersByGuid(guid: string): Promise<SurveyAnswer
   return result;
 }
 
-const resolveBaselineSurveyId = async (): Promise<string | null> => {
+const resolveBaselineSurveyId = async (customerGuid?: string): Promise<string | null> => {
   if (SURVEY_ID_OVERRIDE) return SURVEY_ID_OVERRIDE;
+
+  // Preferred path: resolve the pre-survey configured on the customer's company.
+  // `companies.metadata.program_pre_survey_id` is the canonical reference used by
+  // /api/survey-results and /api/attendance — the per-cohort pre-survey can be
+  // a different survey row per company, so a single hardcoded title cannot cover
+  // live cohorts (e.g. "Baseline Event Bontang Jul 2026").
+  if (customerGuid) {
+    const { data: appUser } = await supabase
+      .from("app_users")
+      .select("company_id")
+      .eq("customer_guid", customerGuid)
+      .maybeSingle();
+
+    let companyId = (appUser?.company_id as string | undefined) ?? null;
+
+    if (!companyId) {
+      const { data: anyResp } = await supabase
+        .from("survey_responses")
+        .select("company_id")
+        .eq("customer_guid", customerGuid)
+        .not("company_id", "is", null)
+        .order("submitted_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      companyId = (anyResp?.company_id as string | undefined) ?? null;
+    }
+
+    if (companyId) {
+      const { data: company } = await supabase
+        .from("companies")
+        .select("metadata")
+        .eq("id", companyId)
+        .maybeSingle();
+      const meta = (company?.metadata as Record<string, unknown> | null) ?? {};
+      const preId = (meta.program_pre_survey_id as string | undefined) ?? null;
+      if (preId) return preId;
+
+      // Fallback within company: the most recent training_event's pre-survey.
+      const { data: evt } = await supabase
+        .from("training_events")
+        .select("survey_id")
+        .eq("company_id", companyId)
+        .not("survey_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (evt?.survey_id) return evt.survey_id as string;
+    }
+  }
+
+  // Legacy fallback: exact title match (preserves previous behaviour for seeded
+  // "Baseline UMKM Feb 2026" cohorts that still rely on it).
   const { data: surveyByTitle, error: surveyErr } = await supabase
     .from("surveys")
     .select("id, title")
