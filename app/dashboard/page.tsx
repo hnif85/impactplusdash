@@ -53,6 +53,37 @@ export default function DashboardPage() {
   );
 }
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_KEY_PREFIX = "ip_dash_";
+
+const getCacheKey = (code: string) => `${CACHE_KEY_PREFIX}${code}`;
+
+const getFromCache = (code: string): { data: CampaignResponse; ts: number } | null => {
+  try {
+    const raw = localStorage.getItem(getCacheKey(code));
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (Date.now() - entry._ts > CACHE_TTL_MS) {
+      localStorage.removeItem(getCacheKey(code));
+      return null;
+    }
+    return { data: entry._data, ts: entry._ts };
+  } catch {
+    return null;
+  }
+};
+
+const saveToCache = (code: string, data: CampaignResponse) => {
+  try {
+    localStorage.setItem(
+      getCacheKey(code),
+      JSON.stringify({ _ts: Date.now(), _data: data })
+    );
+  } catch {
+    /* localStorage full — ignore */
+  }
+};
+
 function DashboardPageContent() {
   const router = useRouter();
   const [profile, setProfile] = useState<DashboardUserProfile | null>(null);
@@ -63,6 +94,8 @@ function DashboardPageContent() {
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [campaignLoading, setCampaignLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -173,8 +206,18 @@ function DashboardPageContent() {
         return;
       }
 
+      const cached = getFromCache(referralCode);
+
+      if (cached) {
+        setCustomers(cached.data.customers);
+        setCompanyName(cached.data.companyName ?? null);
+        setPage(1);
+        setLastUpdated(new Date(cached.ts));
+        setCampaignLoading(false);
+      }
+
       try {
-        setCampaignLoading(true);
+        if (!cached) setCampaignLoading(true);
         setError(null);
 
         const qs = new URLSearchParams({
@@ -188,23 +231,25 @@ function DashboardPageContent() {
 
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          setError(body?.error ?? "Gagal memuat data campaign.");
+          if (!cached) setError(body?.error ?? "Gagal memuat data campaign.");
           return;
         }
 
         const data = (await res.json()) as CampaignResponse;
+        saveToCache(referralCode, data);
         setCustomers(data.customers);
         setCompanyName(data.companyName ?? null);
         setPage(1);
+        setLastUpdated(new Date());
       } catch {
-        setError("Terjadi kesalahan saat memuat dashboard campaign.");
+        if (!cached) setError("Terjadi kesalahan saat memuat dashboard campaign.");
       } finally {
         setCampaignLoading(false);
       }
     };
 
     loadCampaign();
-  }, [profile, referralCode, router]);
+  }, [profile, referralCode, router, refreshKey]);
 
   const formatDate = (value: string | null) => {
     if (!value) return "-";
@@ -362,6 +407,11 @@ function DashboardPageContent() {
     currentPage * PAGE_SIZE
   );
 
+  const handleRefresh = () => {
+    if (referralCode) localStorage.removeItem(getCacheKey(referralCode));
+    setRefreshKey((k) => k + 1);
+  };
+
   const handleExport = async () => {
     if (filteredCustomers.length === 0) {
       setExportError("Tidak ada data yang cocok dengan filter saat ini.");
@@ -500,10 +550,22 @@ function DashboardPageContent() {
 
           <section className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/20 md:p-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-              <div>
+              <div className="flex items-center gap-3">
                 <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Daftar user</p>
+                {lastUpdated && (
+                  <span className="text-[11px] text-zinc-500">
+                    Diperbarui {Math.round((Date.now() - lastUpdated.getTime()) / 60000)} menit lalu
+                  </span>
+                )}
               </div>
               <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 w-full md:w-auto">
+                <button
+                  onClick={handleRefresh}
+                  disabled={campaignLoading}
+                  className="w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-300 transition hover:border-zinc-200/70 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto"
+                >
+                  {campaignLoading ? "Menyegarkan..." : "Segarkan"}
+                </button>
                 <button
                   onClick={handleExport}
                   disabled={exporting || filteredCustomers.length === 0}
