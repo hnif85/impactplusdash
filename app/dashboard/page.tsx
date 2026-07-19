@@ -340,9 +340,11 @@ function DashboardPageContent() {
 
       if (isSameDay) {
         stats.today += 1;
-      } else if (diffDays < 7) {
+      }
+      if (diffDays < 7) {
         stats.thisWeek += 1;
-      } else if (diffDays <= 30) {
+      }
+      if (diffDays <= 30) {
         stats.thisMonth += 1;
       } else {
         stats.pasif += 1;
@@ -469,9 +471,7 @@ function DashboardPageContent() {
                 <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Aktif</p>
                 <div className="mt-2 flex items-baseline gap-3">
                   <p className="text-3xl font-semibold text-white">
-                    {campaignLoading
-                      ? "..."
-                      : usageStats.today + usageStats.thisWeek + usageStats.thisMonth}
+                    {campaignLoading ? "..." : usageStats.thisMonth}
                   </p>
                   <p className="text-xs text-zinc-400">user</p>
                 </div>
@@ -491,9 +491,9 @@ function DashboardPageContent() {
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10">
                 <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Pasif</p>
                 <p className="mt-2 text-3xl font-semibold text-white">
-                  {campaignLoading ? "..." : usageStats.pasif}
+                  {campaignLoading ? "..." : usageStats.pasif + usageStats.neverUsed}
                 </p>
-                <p className="text-xs text-zinc-400">User tidak aktif lebih dari 30 hari</p>
+                <p className="text-xs text-zinc-400">Tidak aktif lebih dari 30 hari atau belum pernah pakai</p>
               </div>
             </div>
           </section>
