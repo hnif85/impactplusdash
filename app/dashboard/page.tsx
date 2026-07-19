@@ -3,7 +3,6 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { DashboardRole, DashboardUserProfile } from "@/lib/auth/rbac";
-import { roleLabels } from "@/lib/auth/rbac";
 
 const DEFAULT_CAMPAIGN_CODE = "CB6aXl";
 const PRODUCT_NAME = "AI untuk UMKM";
@@ -60,7 +59,6 @@ function DashboardPageContent() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [summary, setSummary] = useState<CampaignSummary | null>(null);
   const [customers, setCustomers] = useState<CampaignCustomer[]>([]);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [referralCode, setReferralCode] = useState<string | null>(null);
@@ -68,7 +66,7 @@ function DashboardPageContent() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [activityFilter, setActivityFilter] = useState<"all" | "active" | "idle" | "pasif">("all");
+  const [activityFilter, setActivityFilter] = useState<"all" | "aktif" | "pasif" | "never">("all");
   const [surveyFilter, setSurveyFilter] = useState<"all" | "filled" | "empty">("all");
   const [page, setPage] = useState(1);
   const searchParams = useSearchParams();
@@ -76,7 +74,7 @@ function DashboardPageContent() {
 
   useEffect(() => {
     const activityFromUrl = searchParams.get("activity");
-    if (activityFromUrl === "active" || activityFromUrl === "idle" || activityFromUrl === "pasif") {
+    if (activityFromUrl === "aktif" || activityFromUrl === "pasif" || activityFromUrl === "never") {
       setActivityFilter(activityFromUrl);
     } else {
       setActivityFilter("all");
@@ -195,7 +193,6 @@ function DashboardPageContent() {
         }
 
         const data = (await res.json()) as CampaignResponse;
-        setSummary(data.summary);
         setCustomers(data.customers);
         setCompanyName(data.companyName ?? null);
         setPage(1);
@@ -209,15 +206,6 @@ function DashboardPageContent() {
     loadCampaign();
   }, [profile, referralCode, router]);
 
-  const statusColors: Record<CampaignCustomer["status"], string> = useMemo(
-    () => ({
-      active: "bg-zinc-200 text-zinc-900 ring-zinc-300",
-      expired: "bg-zinc-800 text-zinc-100 ring-zinc-700",
-      registered: "bg-zinc-100 text-zinc-800 ring-zinc-200",
-    }),
-    []
-  );
-
   const formatDate = (value: string | null) => {
     if (!value) return "-";
     const dt = new Date(value);
@@ -229,13 +217,90 @@ function DashboardPageContent() {
     });
   };
 
+  const formatRelativeDate = (value: string | null) => {
+    if (!value) return "Belum pernah";
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return value;
+
+    const now = new Date();
+    const diffMs = now.getTime() - dt.getTime();
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+    const isSameDay =
+      dt.getDate() === now.getDate() &&
+      dt.getMonth() === now.getMonth() &&
+      dt.getFullYear() === now.getFullYear();
+    if (isSameDay) {
+      const time = dt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+      return `Hari ini ${time}`;
+    }
+    if (diffDays < 2) return "Kemarin";
+    if (diffDays < 7) return `${Math.floor(diffDays)} hari lalu`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} minggu lalu`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)} bulan lalu`;
+    return `${Math.floor(diffDays / 365)} tahun lalu`;
+  };
+
+  const cleanProductName = (name: string) =>
+    name.replace(/\s+(free trial|basic|premium|pro|enterprise)$/i, "").trim();
+
+  const cleanProductNames = (customer: CampaignCustomer) => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    const entries: ProductEntry[] =
+      customer.product_list.length > 0
+        ? customer.product_list
+        : customer.subscribe_list.map((s) => ({ product_name: s }));
+    for (const entry of entries) {
+      const raw = entry.product_name ?? entry.name ?? entry.product ?? "";
+      const cleaned = cleanProductName(raw);
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(cleaned);
+    }
+    return result;
+  };
+
+  const getActivityInfo = (customer: CampaignCustomer) => {
+    if (!customer.last_debit_usage) {
+      return {
+        label: "Belum pernah",
+        class: "bg-zinc-700/50 text-zinc-100 ring-white/10",
+      };
+    }
+    const byStatus = {
+      active: {
+        label: "Active (< 7 hari)",
+        class: "bg-emerald-600/20 text-emerald-100 ring-emerald-500/50",
+      },
+      idle: {
+        label: "7 - 30 hari",
+        class: "bg-amber-500/20 text-amber-100 ring-amber-400/60",
+      },
+      pasif: {
+        label: "Pasif (> 30 hari)",
+        class: "bg-red-500/20 text-red-100 ring-red-400/60",
+      },
+    };
+    return byStatus[customer.activity_status];
+  };
+
   const filteredCustomers = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     return customers.filter((c) => {
       const matchesSearch = term
         ? (c.email ?? c.guid ?? "").toLowerCase().includes(term)
         : true;
-      const matchesActivity = activityFilter === "all" ? true : c.activity_status === activityFilter;
+      const matchesActivity =
+        activityFilter === "all"
+          ? true
+          : activityFilter === "aktif"
+            ? c.activity_status === "active" || c.activity_status === "idle"
+            : activityFilter === "pasif"
+              ? c.activity_status === "pasif" && c.last_debit_usage !== null
+              : c.last_debit_usage === null;
       const matchesSurvey =
         surveyFilter === "all"
           ? true
@@ -246,25 +311,46 @@ function DashboardPageContent() {
     });
   }, [activityFilter, customers, searchTerm, surveyFilter]);
 
-  const customerActivity = useMemo(
-    () => {
-      const counts = {
-        total: customers.length,
-        active: 0,
-        idle: 0,
-        pasif: 0,
-      };
+  const usageStats = useMemo(() => {
+    const stats = {
+      total: customers.length,
+      today: 0,
+      thisWeek: 0,
+      thisMonth: 0,
+      pasif: 0,
+      neverUsed: 0,
+    };
+    const now = new Date();
 
-      customers.forEach((c) => {
-        if (c.activity_status === "active") counts.active += 1;
-        else if (c.activity_status === "idle") counts.idle += 1;
-        else if (c.activity_status === "pasif") counts.pasif += 1;
-      });
+    customers.forEach((c) => {
+      if (!c.last_debit_usage) {
+        stats.neverUsed += 1;
+        return;
+      }
+      const dt = new Date(c.last_debit_usage);
+      if (Number.isNaN(dt.getTime())) {
+        stats.neverUsed += 1;
+        return;
+      }
+      const diffDays = (now.getTime() - dt.getTime()) / (1000 * 60 * 60 * 24);
+      const isSameDay =
+        dt.getDate() === now.getDate() &&
+        dt.getMonth() === now.getMonth() &&
+        dt.getFullYear() === now.getFullYear();
 
-      return counts;
-    },
-    [customers]
-  );
+      if (isSameDay) {
+        stats.today += 1;
+      } else if (diffDays < 7) {
+        stats.thisWeek += 1;
+      } else if (diffDays <= 30) {
+        stats.thisMonth += 1;
+      } else {
+        stats.pasif += 1;
+      }
+    });
+
+    return stats;
+  }, [customers]);
 
   const totalCustomers = filteredCustomers.length;
   const totalPages = Math.max(1, Math.ceil(totalCustomers / PAGE_SIZE));
@@ -301,16 +387,8 @@ function DashboardPageContent() {
       ];
 
       const rows = filteredCustomers.map((customer) => {
-        const productsLabel =
-          customer.product_list.length > 0
-            ? customer.product_list
-                .map((p) => {
-                  const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
-                  const exp = p.expired_at ? formatDate(p.expired_at) : "-";
-                  return `${name} (exp ${exp})`;
-                })
-                .join(", ")
-            : customer.subscribe_list.join(", ");
+        const activityInfo = getActivityInfo(customer);
+        const cleanProducts = cleanProductNames(customer);
 
         return [
           customer.email ?? "",
@@ -318,12 +396,14 @@ function DashboardPageContent() {
           customer.full_name ?? customer.username ?? "",
           customer.phone ?? "",
           customer.referal_code ?? "",
-          customer.activity_status,
+          activityInfo.label,
           customer.survey_completed ? "Sudah isi" : "Belum isi",
           customer.status,
-          customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-",
+          customer.last_debit_usage
+            ? `${formatRelativeDate(customer.last_debit_usage)} (${formatDate(customer.last_debit_usage)})`
+            : "-",
           customer.expires_at ? formatDate(customer.expires_at) : "-",
-          productsLabel || "-",
+          cleanProducts.join(", ") || "-",
         ];
       });
 
@@ -376,40 +456,45 @@ function DashboardPageContent() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                {
-                  label: "Jumlah user terdaftar",
-                  value: customerActivity.total,
-                  hint: "Total user yang terdaftar di program ini",
-                },
-                {
-                  label: "User aktif",
-                  value: customerActivity.active,
-                  hint: "Aktif dengan debit < 7 hari terakhir",
-                },
-                {
-                  label: "User idle",
-                  value: customerActivity.idle,
-                  hint: "Tidak aktif 7 - 30 hari terakhir",
-                },
-                {
-                  label: "User pasif",
-                  value: customerActivity.pasif,
-                  hint: "Tidak aktif lebih dari 30 hari",
-                },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10"
-                >
-                  <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">{item.label}</p>
-                  <p className="mt-2 text-3xl font-semibold text-white">
-                    {campaignLoading ? "..." : item.value}
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10">
+                <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Total user</p>
+                <p className="mt-2 text-3xl font-semibold text-white">
+                  {campaignLoading ? "..." : usageStats.total}
+                </p>
+                <p className="text-xs text-zinc-400">User yang terdaftar di program ini</p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10">
+                <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Aktif</p>
+                <div className="mt-2 flex items-baseline gap-3">
+                  <p className="text-3xl font-semibold text-white">
+                    {campaignLoading
+                      ? "..."
+                      : usageStats.today + usageStats.thisWeek + usageStats.thisMonth}
                   </p>
-                  <p className="text-xs text-zinc-400">{item.hint}</p>
+                  <p className="text-xs text-zinc-400">user</p>
                 </div>
-              ))}
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-300">
+                  <span className="rounded-lg bg-emerald-500/15 px-2 py-1 text-emerald-100">
+                    Hari ini {campaignLoading ? "..." : usageStats.today}
+                  </span>
+                  <span className="rounded-lg bg-emerald-500/10 px-2 py-1 text-emerald-100/80">
+                    Minggu ini {campaignLoading ? "..." : usageStats.thisWeek}
+                  </span>
+                  <span className="rounded-lg bg-emerald-500/10 px-2 py-1 text-emerald-100/80">
+                    Bulan ini {campaignLoading ? "..." : usageStats.thisMonth}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10">
+                <p className="text-xs uppercase tracking-[0.15em] text-zinc-300">Pasif</p>
+                <p className="mt-2 text-3xl font-semibold text-white">
+                  {campaignLoading ? "..." : usageStats.pasif}
+                </p>
+                <p className="text-xs text-zinc-400">User tidak aktif lebih dari 30 hari</p>
+              </div>
             </div>
           </section>
 
@@ -434,9 +519,9 @@ function DashboardPageContent() {
                   className="w-full rounded-xl border border-white/20 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-zinc-200/70 focus:outline-none md:w-auto"
                 >
                   <option value="all">Semua activity</option>
-                  <option value="active">Active (&lt; 7 hari)</option>
-                  <option value="idle">Idle (7 - 30 hari)</option>
-                  <option value="pasif">Pasif (&gt; 30 hari)</option>
+                  <option value="aktif">Aktif</option>
+                  <option value="pasif">Pasif</option>
+                  <option value="never">Belum pernah debit</option>
                 </select>
                 <select
                   value={surveyFilter}
@@ -475,24 +560,9 @@ function DashboardPageContent() {
                 <div className="grid gap-3 md:hidden">
                   {paginatedCustomers.map((customer, idx) => {
                     const key = customer.guid ?? customer.email ?? customer.phone ?? `card-${idx}`;
-                        const contact = customer.email ?? customer.phone ?? "-";
-                        const productsLabel =
-                          customer.product_list && customer.product_list.length > 0
-                            ? customer.product_list
-                                .map((p) => {
-                              const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
-                              const exp = p.expired_at ? formatDate(p.expired_at) : "-";
-                              return `${name} (exp ${exp})`;
-                            })
-                            .join(", ")
-                        : customer.subscribe_list.length > 0
-                          ? customer.subscribe_list.join(", ")
-                          : "-";
-                    const activityClass = {
-                      active: "bg-emerald-600/15 text-emerald-100 ring-1 ring-emerald-500/50",
-                      idle: "bg-amber-500/15 text-amber-100 ring-1 ring-amber-400/60",
-                      pasif: "bg-red-500/15 text-red-100 ring-1 ring-red-400/60",
-                    }[customer.activity_status];
+                    const contact = customer.email ?? customer.phone ?? "-";
+                    const activityInfo = getActivityInfo(customer);
+                    const cleanProducts = cleanProductNames(customer);
 
                     return (
                       <article
@@ -523,24 +593,21 @@ function DashboardPageContent() {
 
                         <div className="mt-3 space-y-2 text-sm text-zinc-200">
                           <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
-                            <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Aplikasi</p>
-                            <p className="text-zinc-100">{productsLabel}</p>
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Terakhir Menggunakan</p>
+                            <p className="font-semibold text-zinc-100">
+                              {customer.last_debit_usage ? formatRelativeDate(customer.last_debit_usage) : "Belum pernah"}
+                            </p>
+                            <p className="text-[11px] text-zinc-500">
+                              {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
+                            </p>
                           </div>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                             <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
                               <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Activity</p>
-                              <span className={`mt-1 inline-flex w-fit items-center gap-2 rounded-lg px-3 py-1 text-xs font-semibold ${activityClass}`}>
+                              <span className={`mt-1 inline-flex w-fit items-center gap-2 rounded-lg px-3 py-1 text-xs font-semibold ${activityInfo.class}`}>
                                 <span className="h-2 w-2 rounded-full bg-current" />
-                                {customer.activity_status === "active"
-                                  ? "Active ( < 7 hari)"
-                                  : customer.activity_status === "idle"
-                                    ? "Idle (7 - 30 hari)"
-                                    : "Pasif ( > 30 hari)"}
+                                {activityInfo.label}
                               </span>
-                              <p className="mt-1 text-[11px] text-zinc-500">
-                                Terakhir menggunakan:{" "}
-                                {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
-                              </p>
                             </div>
                             <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
                               <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Kuesioner</p>
@@ -557,6 +624,10 @@ function DashboardPageContent() {
                                 {customer.survey_completed ? "Sudah isi" : "Belum isi"}
                               </span>
                             </div>
+                          </div>
+                          <div className="rounded-xl border border-white/5 bg-white/10 px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">Aplikasi</p>
+                            <p className="text-xs text-zinc-100">{cleanProducts.join(", ") || "-"}</p>
                           </div>
                         </div>
                       </article>
@@ -576,13 +647,16 @@ function DashboardPageContent() {
                         Telepon
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                        Aplikasi yang dipergunakan
+                        Terakhir Menggunakan
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
                         Activity
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
                         Kuesioner
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                        Aplikasi
                       </th>
                       <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-200">
                         Action
@@ -592,14 +666,14 @@ function DashboardPageContent() {
                   <tbody className="divide-y divide-white/10 bg-white/5 text-zinc-50">
                     {campaignLoading && (
                       <tr>
-                        <td className="px-4 py-4 text-zinc-200" colSpan={6}>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={7}>
                           Memuat data campaign...
                         </td>
                       </tr>
                     )}
                     {!campaignLoading && customers.length === 0 && (
                       <tr>
-                        <td className="px-4 py-4 text-zinc-200" colSpan={6}>
+                        <td className="px-4 py-4 text-zinc-200" colSpan={7}>
                           Belum ada customer untuk kode referral ini.
                         </td>
                       </tr>
@@ -609,18 +683,8 @@ function DashboardPageContent() {
                         const key = customer.guid ?? customer.email ?? customer.phone ?? `row-${idx}`;
                         const contact = customer.email ?? customer.phone ?? "-";
                         const phoneLabel = customer.phone ?? "-";
-                        const productsLabel =
-                          customer.product_list && customer.product_list.length > 0
-                            ? customer.product_list
-                                .map((p) => {
-                                  const name = p.product_name ?? p.name ?? p.product ?? "Unknown";
-                                  const exp = p.expired_at ? formatDate(p.expired_at) : "-";
-                                  return `${name} (exp ${exp})`;
-                                })
-                                .join(", ")
-                            : customer.subscribe_list.length > 0
-                              ? customer.subscribe_list.join(", ")
-                              : "-";
+                        const activityInfo = getActivityInfo(customer);
+                        const cleanProducts = cleanProductNames(customer);
                         return (
                           <tr key={key} className="hover:bg-white/10">
                             <td className="px-4 py-4">
@@ -632,29 +696,21 @@ function DashboardPageContent() {
                               </div>
                             </td>
                             <td className="px-4 py-3 text-sm text-zinc-100">{phoneLabel}</td>
-                            <td className="px-4 py-3 text-zinc-100 text-sm">{productsLabel}</td>
                             <td className="px-4 py-3 text-sm">
-                              <div className="flex flex-col gap-1 text-zinc-100">
-                                <span
-                                  className={
-                                    {
-                                      active: "inline-flex w-fit items-center gap-2 rounded-lg bg-emerald-600/20 px-3 py-1 text-emerald-100 ring-1 ring-emerald-500/50",
-                                      idle: "inline-flex w-fit items-center gap-2 rounded-lg bg-amber-500/20 px-3 py-1 text-amber-100 ring-1 ring-amber-400/60",
-                                      pasif: "inline-flex w-fit items-center gap-2 rounded-lg bg-red-500/20 px-3 py-1 text-red-100 ring-1 ring-red-400/60",
-                                    }[customer.activity_status]
-                                  }
-                                >
-                                  <span className="h-2 w-2 rounded-full bg-current" />
-                                  {customer.activity_status === "active"
-                                    ? "Active ( < 7 hari)"
-                                    : customer.activity_status === "idle"
-                                      ? "Idle (7 - 30 hari)"
-                                      : "Pasif ( > 30 hari)"}
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-semibold text-zinc-100">
+                                  {customer.last_debit_usage ? formatRelativeDate(customer.last_debit_usage) : "Belum pernah"}
                                 </span>
                                 <span className="text-xs text-zinc-400">
-                                  Terakhir menggunakan: {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
+                                  {customer.last_debit_usage ? formatDate(customer.last_debit_usage) : "-"}
                                 </span>
                               </div>
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <span className={`inline-flex w-fit items-center gap-2 rounded-lg px-3 py-1 text-xs font-semibold ${activityInfo.class}`}>
+                                <span className="h-2 w-2 rounded-full bg-current" />
+                                {activityInfo.label}
+                              </span>
                             </td>
                             <td className="px-4 py-3 text-sm">
                               <span
@@ -669,6 +725,9 @@ function DashboardPageContent() {
                                 />
                                 {customer.survey_completed ? "Sudah isi" : "Belum isi"}
                               </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-zinc-100">
+                              {cleanProducts.join(", ") || "-"}
                             </td>
                             <td className="px-4 py-3 text-right">
                               {customer.guid ? (
