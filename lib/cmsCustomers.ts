@@ -716,6 +716,24 @@ export async function getCampaignDashboard(
       if (!userId || lastDebitByUser.has(userId)) continue;
       lastDebitByUser.set(userId, row.created_at as string | null);
     }
+
+    // Also query by appUserIds to catch transactions keyed by app_users.id
+    if (appUserIds.size > 0) {
+      const { data: creditRowsByApp, error: creditErrorApp } = await supabase
+        .from("credit_manager_transactions")
+        .select("user_id, created_at")
+        .eq("type", "debit")
+        .in("user_id", Array.from(appUserIds))
+        .order("created_at", { ascending: false });
+
+      if (!creditErrorApp) {
+        for (const row of creditRowsByApp ?? []) {
+          const userId = row.user_id as string | null;
+          if (!userId || lastDebitByUser.has(userId)) continue;
+          lastDebitByUser.set(userId, row.created_at as string | null);
+        }
+      }
+    }
   }
 
   const surveyRespondents = new Set<string>();
@@ -818,13 +836,16 @@ export async function getCampaignDashboard(
   }
 
   const customersWithActivity = campaignCustomers.map((customer) => {
-    const lastDebit = customer.guid ? lastDebitByUser.get(customer.guid) ?? null : null;
-    const { activity, lastUsage } = computeActivity(lastDebit, now);
     const emailKey = normalizeEmail(customer.email);
     const phoneKey = normalizePhone(customer.phone);
     const appUserId =
       (emailKey ? emailLookup.get(emailKey) : undefined) ??
       (phoneKey ? phoneLookup.get(phoneKey) : undefined);
+    const lastDebit =
+      (appUserId ? lastDebitByUser.get(appUserId) : undefined) ??
+      (customer.guid ? lastDebitByUser.get(customer.guid) : undefined) ??
+      null;
+    const { activity, lastUsage } = computeActivity(lastDebit, now);
     const surveyCompleted =
       (appUserId && surveyRespondents.has(appUserId)) ||
       (customer.guid ? surveyRespondents.has(customer.guid) : false);
