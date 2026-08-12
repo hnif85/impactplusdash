@@ -123,6 +123,11 @@ export default function EventDetailPage() {
   // Lazy initialiser rather than an effect: no extra render, SSR-guarded.
   const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
 
+  // null = follow the event, boolean = the reader has decided. Derived at render
+  // rather than set from an effect, so the panel never flashes open before the
+  // attendance count arrives.
+  const [linksOpenOverride, setLinksOpenOverride] = useState<boolean | null>(null);
+
   // Event-scoped only. The Kondisi Usaha numbers describe the whole programme
   // and live on /dashboard/surveys.
   const stats = useMemo(() => {
@@ -145,6 +150,11 @@ export default function EventDetailPage() {
     };
   }, [rows]);
 
+  // Nobody checked in yet -> the links are why you are here. Anyone checked in
+  // -> this is a report now, so they fold away until asked for.
+  const linksOpen = linksOpenOverride ?? (!loading && stats.attended === 0);
+  const setLinksOpen = (next: boolean) => setLinksOpenOverride(next);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -160,13 +170,42 @@ export default function EventDetailPage() {
         </button>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Link untuk Peserta</p>
-        <p className="mb-4 text-[11px] text-zinc-500">
-          Semua link meminta peserta memasukkan email lebih dulu.
-        </p>
+      {/*
+        Sharing links is a job you do once, around the event; reading the
+        results is what you come back for. Two full URLs plus their hints held
+        the top third of the page open forever, pushing the actual findings
+        below the fold on every later visit.
 
-        <div className="space-y-3">
+        The default follows the event rather than a fixed preference: with
+        nobody checked in yet the links are the reason you opened the page, so
+        they start open. Once anyone has attended the page has become a report
+        and they fold away. An explicit click always wins.
+      */}
+      <div className="rounded-2xl border border-white/10 bg-white/5">
+        <button
+          onClick={() => setLinksOpen(!linksOpen)}
+          className="flex w-full items-center justify-between gap-3 rounded-2xl px-5 py-4 text-left hover:bg-white/5"
+          aria-expanded={linksOpen}
+        >
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold uppercase tracking-wider text-zinc-400">
+              Link untuk Peserta
+            </span>
+            <span className="mt-0.5 block truncate text-[11px] text-zinc-500">
+              {linksOpen
+                ? "Semua link meminta peserta memasukkan email lebih dulu."
+                : `Absensi${links.event_post ? " & post survey event" : ""} — klik untuk membuka`}
+            </span>
+          </span>
+          <span
+            className={`shrink-0 text-zinc-500 transition-transform ${linksOpen ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          >
+            ▾
+          </span>
+        </button>
+
+        <div className={`space-y-3 px-5 pb-5 ${linksOpen ? "" : "hidden"}`}>
           <ShareLink
             label="Absensi (saat event)"
             hint="Peserta wajib mengisi survey Pre program & Pre event sebelum kehadiran tercatat."
@@ -177,22 +216,22 @@ export default function EventDetailPage() {
             hint={links.event_post_title ?? "Belum diatur untuk event ini."}
             url={origin && links.event_post ? `${origin}${links.event_post}` : ""}
           />
-        </div>
 
-        {!links.event_post && (
-          <p className="mt-3 text-[11px] text-amber-300/80">
-            Post survey event belum terhubung. Isi{" "}
-            <span className="font-mono">training_events.post_survey_id</span> untuk memunculkan link-nya.
+          {!links.event_post && (
+            <p className="text-[11px] text-amber-300/80">
+              Post survey event belum terhubung. Isi{" "}
+              <span className="font-mono">training_events.post_survey_id</span> untuk memunculkan link-nya.
+            </p>
+          )}
+
+          <p className="border-t border-white/5 pt-3 text-[11px] text-zinc-500">
+            Post survey <span className="text-zinc-400">program</span> berlaku lintas event — link-nya ada di{" "}
+            <Link href="/dashboard/surveys" className="font-semibold text-emerald-400 hover:text-emerald-300">
+              Hasil Survey
+            </Link>
+            .
           </p>
-        )}
-
-        <p className="mt-4 border-t border-white/5 pt-3 text-[11px] text-zinc-500">
-          Post survey <span className="text-zinc-400">program</span> berlaku lintas event — link-nya ada di{" "}
-          <Link href="/dashboard/surveys" className="font-semibold text-emerald-400 hover:text-emerald-300">
-            Hasil Survey
-          </Link>
-          .
-        </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
