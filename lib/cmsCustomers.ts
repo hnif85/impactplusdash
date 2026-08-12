@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
+import { fetchAllIn, fetchAllPages } from "./paginate";
 
 const PRODUCT_NAME = "AI untuk UMKM";
 const CAMPAIGN_REFERRAL_CODE = "CB6aXl";
@@ -84,59 +85,6 @@ const normalizeName = (value: string | null | undefined) => value?.trim().toLowe
 const normalizeEmail = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
 const normalizePhone = (value: string | null | undefined) =>
   value ? value.replace(/\D+/g, "") : "";
-
-/**
- * PostgREST caps EVERY response at 1000 rows. A query without an explicit range
- * does not error when it overflows - it just returns the first 1000 and says
- * nothing, so the caller quietly computes on partial data.
- *
- * That is exactly how the Pupuk Kaltim cohort lost 4 users: 2049 debit rows,
- * only the newest 1000 came back, and the four whose last debit sat below that
- * cut-off had no usage row at all - so they were filed as "never used" while
- * the partnership dashboard (raw SQL, no cap) counted them as active.
- *
- * Anything that can grow past 1000 rows goes through here.
- */
-const PAGE_SIZE = 1000;
-
-async function fetchAllPages<T>(
-  label: string,
-  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await page(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(`${label}: ${error.message}`);
-    const rows = data ?? [];
-    out.push(...rows);
-    if (rows.length < PAGE_SIZE) return out;
-  }
-}
-
-/**
- * `.in()` becomes a query string, and a cohort of a few thousand guids builds a
- * URL long enough for PostgREST to reject outright. Split the key list so each
- * request stays well under any URL limit; each chunk is still paged internally.
- */
-const IN_CHUNK_SIZE = 200;
-
-const chunk = <T>(items: T[], size: number): T[][] => {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-};
-
-async function fetchAllIn<T>(
-  label: string,
-  keys: string[],
-  page: (keyChunk: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
-): Promise<T[]> {
-  const out: T[] = [];
-  for (const keyChunk of chunk(keys, IN_CHUNK_SIZE)) {
-    out.push(...(await fetchAllPages(label, (from, to) => page(keyChunk, from, to))));
-  }
-  return out;
-}
 
 const toSubscribeList = (value: unknown): string[] => {
   if (!value) return [];

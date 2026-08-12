@@ -57,6 +57,9 @@ type ProfileQuestion = {
 // Validated on the dark surface (CVD deutan dE 16.9 vs the gray).
 const CORRECT_COLOR = "#059669";
 const WRONG_COLOR = "#71717a";
+// A drop needs its own colour: WRONG_COLOR is the neutral gray used for the
+// "before" state, so reusing it would make a decline look like context.
+const DECLINE_COLOR = "#dc2626";
 
 export default function EventDetailPage() {
   const params = useParams<{ eventId: string }>();
@@ -67,6 +70,11 @@ export default function EventDetailPage() {
   const [rows, setRows] = useState<ParticipantRow[]>([]);
   const [surveyMeta, setSurveyMeta] = useState<SurveyMeta>({ pre: null, post: null, quiz: null, quiz_post: null });
   const [quizTotal, setQuizTotal] = useState(0);
+  // How many people the quiz percentages are computed over, and whether that is
+  // the matched pre+post set. Shown next to the numbers: a delta whose basis is
+  // unstated reads as if it covered everyone.
+  const [quizBasis, setQuizBasis] = useState(0);
+  const [quizBasisMatched, setQuizBasisMatched] = useState(false);
   const [quizBreakdown, setQuizBreakdown] = useState<QuizQuestion[]>([]);
   const [profileBreakdown, setProfileBreakdown] = useState<ProfileQuestion[]>([]);
   const [links, setLinks] = useState<{
@@ -98,6 +106,8 @@ export default function EventDetailPage() {
         setRows(data.attendance ?? []);
         setSurveyMeta(data.survey_meta ?? { pre: null, post: null, quiz: null, quiz_post: null });
         setQuizTotal(data.quiz_total ?? 0);
+        setQuizBasis(data.quiz_basis ?? 0);
+        setQuizBasisMatched(Boolean(data.quiz_basis_matched));
         setQuizBreakdown(data.quiz_breakdown ?? []);
         setProfileBreakdown(data.profile_breakdown ?? []);
         setLinks(data.links ?? { event_post: null, event_post_title: null, program_post: null });
@@ -117,10 +127,18 @@ export default function EventDetailPage() {
   // and live on /dashboard/surveys.
   const stats = useMemo(() => {
     const deltas = rows.map((r) => r.quiz_delta).filter((d): d is number => d !== null);
+    // Averaged over the people who sat BOTH quizzes only. Averaging all pre
+    // papers against all post papers compares two different groups - with 6 pre
+    // and 11 post it reads as a drop that never happened.
+    const both = rows.filter((r) => r.quiz_pre !== null && r.quiz_post !== null);
+    const mean = (nums: number[]) =>
+      nums.length > 0 ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null;
     return {
       attended: rows.filter((r) => r.attended).length,
       quizPre: rows.filter((r) => r.quiz_pre !== null).length,
       quizPost: rows.filter((r) => r.quiz_post !== null).length,
+      avgQuizPre: mean(both.map((r) => r.quiz_pre!.pct)),
+      avgQuizPost: mean(both.map((r) => r.quiz_post!.pct)),
       avgQuizDelta: deltas.length > 0
         ? Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length)
         : null,
@@ -196,6 +214,21 @@ export default function EventDetailPage() {
           Event {eventDays.length} hari ({eventDays[0]} — {eventDays[eventDays.length - 1]}).
           Peserta absen tiap hari; survey tetap sekali isi.
           Kolom Hadir menunjukkan berapa hari mereka datang.
+        </p>
+      )}
+
+      {/* One sentence a reader can quote, instead of assembling it from four
+          stat cards. Only the matched set is quoted: the pre and post rounds
+          usually have different head counts, so their raw averages are not
+          comparable. */}
+      {quizTotal > 0 && quizBasisMatched && stats.avgQuizDelta !== null && (
+        <p className="text-sm text-zinc-300">
+          <span className="font-semibold text-white">{stats.attended} peserta hadir.</span>{" "}
+          {quizBasis} mengikuti kuis awal dan akhir: pengetahuan naik{" "}
+          <span className="font-semibold text-emerald-400">
+            {stats.avgQuizPre}% → {stats.avgQuizPost}%
+          </span>{" "}
+          <span className="text-zinc-500">({stats.avgQuizDelta > 0 ? "+" : ""}{stats.avgQuizDelta}pp)</span>.
         </p>
       )}
 
@@ -286,7 +319,14 @@ export default function EventDetailPage() {
         </>
       )}
 
-      {quizBreakdown.length > 0 && <QuizAnalysis questions={quizBreakdown} meta={surveyMeta} />}
+      {quizBreakdown.length > 0 && (
+        <QuizAnalysis
+          questions={quizBreakdown}
+          meta={surveyMeta}
+          basis={quizBasis}
+          basisMatched={quizBasisMatched}
+        />
+      )}
       {profileBreakdown.length > 0 && <ProfileAnalysis questions={profileBreakdown} />}
     </div>
   );
@@ -451,52 +491,79 @@ function TextProfile({ pre, post }: { pre: ProfileSide | null; post: ProfileSide
  * Which material didn't land. Sorted hardest-first by the API, so the questions
  * that need re-teaching are what you see without scrolling.
  */
-function QuizAnalysis({ questions, meta }: { questions: QuizQuestion[]; meta: SurveyMeta }) {
+/**
+ * One question per row, not per card.
+ *
+ * The old layout stacked two full-width bars inside a tall card. At that width
+ * 75% and 83% are four pixels apart, so the eye cannot rank the questions - it
+ * has to read all twelve numbers instead. Twelve cards also ran well past a
+ * screen, which hid the very comparison the section exists to make.
+ *
+ * A dumbbell puts pre and post on one shared 0-100 track: the gap between the
+ * dots IS the change, so direction and size are legible without reading, and
+ * the whole quiz fits in one view.
+ */
+function QuizAnalysis({
+  questions, meta, basis, basisMatched,
+}: { questions: QuizQuestion[]; meta: SurveyMeta; basis: number; basisMatched: boolean }) {
   const [open, setOpen] = useState<number | null>(null);
   const hasPost = questions.some((q) => q.post);
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="text-sm font-semibold text-white">Analisis Kuis</h3>
         <span className="text-[11px] text-zinc-500">
           {hasPost ? "yang masih lemah di atas" : "tersulit di atas"}
         </span>
       </div>
       <p className="mb-4 text-xs text-zinc-500">
-        % peserta yang menjawab benar.{" "}
+        % peserta yang menjawab benar
+        {basis > 0 && (
+          <>
+            {" "}
+            <span className="text-zinc-400">
+              (n={basis}
+              {basisMatched ? ", yang ikut kuis awal & akhir" : ""})
+            </span>
+          </>
+        )}
+        .{" "}
         {hasPost
-          ? "Abu-abu = sebelum event, hijau = sesudah."
+          ? "Titik abu-abu = sebelum event, hijau = sesudah."
           : `${meta.quiz ?? "Kuis"} — post-test belum ada, jadi belum ada pembanding.`}
       </p>
 
-      <div className="space-y-3">
+      <div className="divide-y divide-white/5 border-y border-white/5">
         {questions.map((q) => {
           const isOpen = open === q.order_index;
-          const headline = q.post ?? q.pre;
           return (
-            <div key={q.order_index} className="rounded-xl border border-white/5 bg-white/5 p-3">
-              <button onClick={() => setOpen(isOpen ? null : q.order_index)} className="w-full text-left">
-                <div className="mb-2 flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 break-words text-xs text-zinc-300">{q.order_index}. {q.text}</span>
-                  <span className="shrink-0 whitespace-nowrap text-xs tabular-nums">
+            <div key={q.order_index}>
+              <button
+                onClick={() => setOpen(isOpen ? null : q.order_index)}
+                className="w-full py-2.5 text-left hover:bg-white/5"
+                aria-expanded={isOpen}
+              >
+                <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-[1fr_11rem_7.5rem] sm:items-center sm:gap-3">
+                  <span className="min-w-0 break-words text-xs text-zinc-300">
+                    <span className="mr-1 tabular-nums text-zinc-600">{q.order_index}.</span>
+                    {q.text}
+                  </span>
+
+                  <Dumbbell pre={q.pre?.pct ?? null} post={q.post?.pct ?? null} hasPost={hasPost} />
+
+                  <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums">
                     <span className="text-zinc-500">{q.pre ? `${q.pre.pct}%` : "—"}</span>
                     <span className="mx-1 text-zinc-700">→</span>
-                    <span className={`font-semibold ${headline ? quizColor(q.post?.pct ?? q.pre!.pct) : "text-zinc-600"}`}>
+                    <span className={`font-semibold ${q.post ? quizColor(q.post.pct) : "text-zinc-600"}`}>
                       {q.post ? `${q.post.pct}%` : "—"}
                     </span>
                     {q.delta !== null && (
-                      <span className={`ml-2 font-semibold ${q.delta > 0 ? "text-emerald-400" : q.delta < 0 ? "text-red-400" : "text-zinc-500"}`}>
-                        {q.delta > 0 ? "▲ +" : q.delta < 0 ? "▼ " : ""}{q.delta}pp
+                      <span className={`ml-1.5 font-semibold ${q.delta > 0 ? "text-emerald-400" : q.delta < 0 ? "text-red-400" : "text-zinc-600"}`}>
+                        {q.delta > 0 ? "+" : ""}{q.delta}
                       </span>
                     )}
                   </span>
-                </div>
-
-                {/* Two thin bars, 2px surface gap - pre in context gray, post in accent. */}
-                <div className="space-y-[2px]">
-                  <QuizBar pct={q.pre?.pct ?? null} color={WRONG_COLOR} label="Pre" />
-                  {hasPost && <QuizBar pct={q.post?.pct ?? null} color={CORRECT_COLOR} label="Post" />}
                 </div>
               </button>
 
@@ -530,6 +597,53 @@ function QuizAnalysis({ questions, meta }: { questions: QuizQuestion[]; meta: Su
         })}
       </div>
     </section>
+  );
+}
+
+/**
+ * Pre and post as two dots on one 0-100 track, joined by the segment between
+ * them. The connector is the finding: its length is how much moved and its
+ * colour which way, so a row can be ranked at a glance instead of read.
+ *
+ * Dots are inset by their own radius so 0% and 100% sit fully inside the track
+ * rather than half-clipped at the edges.
+ */
+function Dumbbell({ pre, post, hasPost }: { pre: number | null; post: number | null; hasPost: boolean }) {
+  const at = (pct: number) => `calc(${pct}% + ${8 - (pct / 100) * 16}px)`;
+  const up = pre !== null && post !== null && post >= pre;
+  const connector = pre !== null && post !== null ? { from: Math.min(pre, post), to: Math.max(pre, post) } : null;
+
+  return (
+    <div className="relative h-4 w-full" aria-hidden="true">
+      <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 rounded-full bg-white/10" />
+      {/* Quarter marks: without them a dot's absolute position is unreadable. */}
+      {[25, 50, 75].map((t) => (
+        <div key={t} className="absolute top-1/2 h-2 w-px -translate-y-1/2 bg-white/5" style={{ left: at(t) }} />
+      ))}
+      {connector && (
+        <div
+          className="absolute top-1/2 h-[3px] -translate-y-1/2 rounded-full"
+          style={{
+            left: at(connector.from),
+            width: `calc(${connector.to - connector.from}% - ${((connector.to - connector.from) / 100) * 16}px)`,
+            background: up ? CORRECT_COLOR : DECLINE_COLOR,
+            opacity: connector.to === connector.from ? 0 : 0.55,
+          }}
+        />
+      )}
+      {pre !== null && (
+        <span
+          className="absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-zinc-500"
+          style={{ left: at(pre) }}
+        />
+      )}
+      {hasPost && post !== null && (
+        <span
+          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-zinc-950"
+          style={{ left: at(post), background: up ? CORRECT_COLOR : DECLINE_COLOR }}
+        />
+      )}
+    </div>
   );
 }
 

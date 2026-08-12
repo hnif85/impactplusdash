@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { averageRating, quizScore, delta, ratingSpec, type ScoringAnswer, type RatingSpec } from "@/lib/surveys/scoring";
 import { eventDays } from "@/lib/attendance";
 import { isUuid } from "@/lib/uuid";
+import { fetchAllIn, fetchAllPages } from "@/lib/paginate";
 
 const JWT_SECRET = process.env.IMPACT_LINK_SECRET!;
 const supabase = createClient(
@@ -39,6 +40,18 @@ type ScoreRow = {
 
 type AnswerRow = ScoringAnswer & { response_id: string };
 
+/**
+ * Read with select("*") - attendance_date arrives via a separate migration, so
+ * naming columns explicitly would break this read before it lands.
+ */
+type AttendanceRow = {
+  customer_guid: string | null;
+  email: string | null;
+  full_name: string | null;
+  attended_at: string | null;
+  attendance_date?: string | null;
+};
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = getAuthUser(req);
@@ -63,18 +76,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     // select("*") so attendance_date (separate migration) does not break this.
-    const { data: attendance, error: attendanceError } = await supabase
-      .from("attendance_logs")
-      .select("*")
-      .eq("event_id", eventId)
-      .order("attended_at", { ascending: false });
-
-    if (attendanceError) throw new Error(attendanceError.message);
+    // A multi-day event with a few hundred participants passes 1000 rows.
+    const attendance = await fetchAllPages<AttendanceRow>(
+      "Failed to load attendance",
+      (from, to) =>
+        supabase
+          .from("attendance_logs")
+          .select("*")
+          .eq("event_id", eventId)
+          .order("attended_at", { ascending: false })
+          .range(from, to)
+    );
 
     // A multi-day event has one row per participant per day.
     const eventDayList = eventDays(event as { start_date?: string | null; end_date?: string | null; event_date?: string | null });
-    const dayOf = (r: Record<string, unknown>) =>
-      (r.attendance_date as string | null) ?? (r.attended_at ? String(r.attended_at).slice(0, 10) : null);
+    const dayOf = (r: AttendanceRow) =>
+      r.attendance_date ?? (r.attended_at ? String(r.attended_at).slice(0, 10) : null);
 
     // Pre/post surveys live on the company, not the event. Two events under one
     // company would therefore report the same pre/post responses.
@@ -163,6 +180,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       pre: null, post: null, quiz: null, quiz_post: null,
     };
     let quizTotal = 0;
+    // How many people every per-question percentage is computed over, and
+    // whether that set is the matched pre+post cohort. The UI must be able to
+    // say "n=6, ikut keduanya" - a delta with an unstated basis invites the
+    // reader to assume it covers everyone.
+    let quizBasis = 0;
+    let quizBasisMatched = false;
     const surveyTitles = new Map<string, string>();
 
     if (surveyIds.length > 0) {
@@ -182,29 +205,42 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // this company's customers.
       let customerGuids: string[] = [];
       if (referralCode) {
-        const { data: customers } = await supabase
-          .from("cms_customers")
-          .select("guid")
-          .eq("referal_code", referralCode);
-        customerGuids = (customers ?? []).map((c) => c.guid).filter(Boolean) as string[];
+        const customers = await fetchAllPages<{ guid: string | null }>(
+          "Failed to load company customers",
+          (from, to) =>
+            supabase.from("cms_customers").select("guid").eq("referal_code", referralCode).range(from, to)
+        );
+        customerGuids = customers.map((c) => c.guid).filter(Boolean) as string[];
       }
 
       if (customerGuids.length > 0) {
-        const { data: responses, error: responsesError } = await supabase
-          .from("survey_responses")
-          .select("id, survey_id, customer_guid")
-          .in("survey_id", surveyIds)
-          .in("customer_guid", customerGuids);
-        if (responsesError) throw new Error(responsesError.message);
+        const responses = await fetchAllIn<{ id: string; survey_id: string; customer_guid: string | null }>(
+          "Failed to load survey responses",
+          customerGuids,
+          (guids, from, to) =>
+            supabase
+              .from("survey_responses")
+              .select("id, survey_id, customer_guid")
+              .in("survey_id", surveyIds)
+              .in("customer_guid", guids)
+              .range(from, to)
+        );
 
-        const responseIds = (responses ?? []).map((r) => r.id);
+        const responseIds = responses.map((r) => r.id);
 
-        const { data: questions, error: questionsError } = await supabase
-          .from("survey_questions")
-          .select("id, survey_id, question_type, correct_answer, question_text, options, order_index, rating_scale")
-          .in("survey_id", surveyIds)
-          .order("order_index", { ascending: true });
-        if (questionsError) throw new Error(questionsError.message);
+        const questions = await fetchAllPages<{
+          id: string; survey_id: string; question_type: string; correct_answer: string | null;
+          question_text: string; options: unknown; order_index: number; rating_scale: unknown;
+        }>(
+          "Failed to load survey questions",
+          (from, to) =>
+            supabase
+              .from("survey_questions")
+              .select("id, survey_id, question_type, correct_answer, question_text, options, order_index, rating_scale")
+              .in("survey_id", surveyIds)
+              .order("order_index", { ascending: true })
+              .range(from, to)
+        );
 
         // Pre/post carry no answer key, so the only number comparable between
         // them is the shared set of rating questions. Their rating_scale decides
@@ -227,14 +263,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         // The pre sitting defines the quiz length; the post copy mirrors it.
         quizTotal = answerKeyPre.size || answerKeyPost.size;
 
+        /**
+         * The query that made this page lie. One row per (respondent x
+         * question) across the programme surveys AND both event quizzes: 1204
+         * rows here, of which the uncapped query returned 1000. The 204 that
+         * never arrived were real post-test answers, so question 1 rendered
+         * 75% instead of 82% and its arrow turned red.
+         */
         let answers: AnswerRow[] = [];
         if (responseIds.length > 0) {
-          const { data: answerRows, error: answersError } = await supabase
-            .from("survey_answers")
-            .select("response_id, question_id, answer_text, answer_value, selected_options")
-            .in("response_id", responseIds);
-          if (answersError) throw new Error(answersError.message);
-          answers = answerRows ?? [];
+          answers = await fetchAllIn<AnswerRow>(
+            "Failed to load survey answers",
+            responseIds,
+            (ids, from, to) =>
+              supabase
+                .from("survey_answers")
+                .select("response_id, question_id, answer_text, answer_value, selected_options")
+                .in("response_id", ids)
+                .range(from, to)
+          );
         }
 
         const byResponse = new Map<string, AnswerRow[]>();
@@ -254,8 +301,40 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
         if (answerKeyPre.size > 0 || answerKeyPost.size > 0) {
 
+          /**
+           * Who sat BOTH quizzes. A per-question delta across different groups
+           * is not a delta at all: with 6 pre and 11 post papers, question 8 read
+           * "100% -> 82%, -18pp" purely because five people who never took the
+           * pre showed up for the post. Restricting both sides to the same
+           * people makes the arrow mean what a reader assumes it means.
+           */
+          const guidOfResponse = new Map(
+            (responses ?? []).filter((r) => r.customer_guid).map((r) => [r.id, r.customer_guid as string])
+          );
+          const takers = (surveyId: string | null) =>
+            new Set(
+              (responses ?? [])
+                .filter((r) => surveyId && r.survey_id === surveyId && r.customer_guid)
+                .map((r) => r.customer_guid as string)
+            );
+          const prePeople = takers(quizPreId);
+          const postPeople = takers(quizPostId);
+          const matched = new Set([...prePeople].filter((g) => postPeople.has(g)));
+          // Before the post round starts there is nobody matched yet; fall back
+          // to every respondent so the pre picture is still shown, and let the
+          // payload say which basis was used.
+          const useMatched = matched.size > 0;
+          quizBasisMatched = useMatched;
+          quizBasis = useMatched ? matched.size : new Set([...prePeople, ...postPeople]).size;
+
           const sideFor = (q: { id: string; options: unknown; correct_answer: string | null }): QuizSide | null => {
-            const list = byQuestion.get(q.id) ?? [];
+            const all = byQuestion.get(q.id) ?? [];
+            const list = useMatched
+              ? all.filter((a) => {
+                  const g = guidOfResponse.get(a.response_id);
+                  return g ? matched.has(g) : false;
+                })
+              : all;
             if (list.length === 0) return null;
             const opts = Array.isArray(q.options) ? (q.options as string[]) : [];
             const counts = new Map<string, number>(opts.map((o) => [o, 0]));
@@ -366,7 +445,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         for (const r of responses ?? []) {
           if (!r.customer_guid) continue;
           const key = r.customer_guid;
+          const isEventQuiz = r.survey_id === quizPreId || r.survey_id === quizPostId;
           if (!rows.has(key)) {
+            /**
+             * Only attendance or an answer to THIS event's quiz earns a row.
+             *
+             * The program Baseline/Endline is answered by the whole company
+             * cohort, so letting it create rows filled the table with people who
+             * never came - 44 rows for an event 11 people attended, the other 33
+             * all reading "TIDAK" and "-". They contributed a Kondisi Usaha
+             * column that has since moved to /dashboard/surveys, so they now add
+             * nothing at all. A program answer still updates a row that already
+             * exists; it just cannot conjure one.
+             */
+            if (!isEventQuiz) continue;
             const p = profiles.get(key);
             rows.set(key, blank(key, key, p?.email ?? "", p?.full_name ?? ""));
           }
@@ -417,6 +509,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       total_check_ins: (attendance ?? []).length,
       survey_meta: surveyMeta,
       quiz_total: quizTotal,
+      quiz_basis: quizBasis,
+      quiz_basis_matched: quizBasisMatched,
       quiz_breakdown: quizBreakdown,
       profile_breakdown: profileBreakdown,
       rating_scale_max: 5,
