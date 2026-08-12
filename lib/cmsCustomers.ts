@@ -85,6 +85,59 @@ const normalizeEmail = (value: string | null | undefined) => value?.trim().toLow
 const normalizePhone = (value: string | null | undefined) =>
   value ? value.replace(/\D+/g, "") : "";
 
+/**
+ * PostgREST caps EVERY response at 1000 rows. A query without an explicit range
+ * does not error when it overflows - it just returns the first 1000 and says
+ * nothing, so the caller quietly computes on partial data.
+ *
+ * That is exactly how the Pupuk Kaltim cohort lost 4 users: 2049 debit rows,
+ * only the newest 1000 came back, and the four whose last debit sat below that
+ * cut-off had no usage row at all - so they were filed as "never used" while
+ * the partnership dashboard (raw SQL, no cap) counted them as active.
+ *
+ * Anything that can grow past 1000 rows goes through here.
+ */
+const PAGE_SIZE = 1000;
+
+async function fetchAllPages<T>(
+  label: string,
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`${label}: ${error.message}`);
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) return out;
+  }
+}
+
+/**
+ * `.in()` becomes a query string, and a cohort of a few thousand guids builds a
+ * URL long enough for PostgREST to reject outright. Split the key list so each
+ * request stays well under any URL limit; each chunk is still paged internally.
+ */
+const IN_CHUNK_SIZE = 200;
+
+const chunk = <T>(items: T[], size: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+};
+
+async function fetchAllIn<T>(
+  label: string,
+  keys: string[],
+  page: (keyChunk: string[], from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const keyChunk of chunk(keys, IN_CHUNK_SIZE)) {
+    out.push(...(await fetchAllPages(label, (from, to) => page(keyChunk, from, to))));
+  }
+  return out;
+}
+
 const toSubscribeList = (value: unknown): string[] => {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -365,21 +418,17 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
   const surveyId = await resolveBaselineSurveyId(companyId ?? undefined);
   if (!surveyId) return null;
 
-  const responseQuery = supabase
-    .from("survey_responses")
-    .select("id, completion_time_seconds")
-    .eq("survey_id", surveyId);
-
-  if (companyId) {
-    responseQuery.eq("company_id", companyId);
-  }
-
-  const { data: responsesFiltered, error: responseErr } = await responseQuery;
-  if (responseErr) {
-    throw new Error(`Gagal memuat responses: ${responseErr.message}`);
-  }
-
-  const responses = responsesFiltered ?? [];
+  const responses = await fetchAllPages<{ id: string; completion_time_seconds: number | null }>(
+    "Gagal memuat responses",
+    (from, to) => {
+      const q = supabase
+        .from("survey_responses")
+        .select("id, completion_time_seconds")
+        .eq("survey_id", surveyId)
+        .range(from, to);
+      return companyId ? q.eq("company_id", companyId) : q;
+    }
+  );
 
   if (!responses || responses.length === 0) return null;
 
@@ -406,15 +455,19 @@ const computeSurveySummary = async (companyId?: string | null): Promise<SurveySu
 
   if (targetQuestionIds.length === 0) return null;
 
-  const { data: answers, error: ansErr } = await supabase
-    .from("survey_answers")
-    .select("question_id, response_id, answer_text, answer_value, selected_options")
-    .in("response_id", responseIds)
-    .in("question_id", targetQuestionIds);
-
-  if (ansErr) {
-    throw new Error(`Gagal memuat jawaban survey: ${ansErr.message}`);
-  }
+  // One row per (respondent x tracked question): 1000 is reached at ~334
+  // respondents, well inside a normal cohort.
+  const answers = await fetchAllIn<AnswerRow>(
+    "Gagal memuat jawaban survey",
+    responseIds,
+    (ids, from, to) =>
+      supabase
+        .from("survey_answers")
+        .select("question_id, response_id, answer_text, answer_value, selected_options")
+        .in("response_id", ids)
+        .in("question_id", targetQuestionIds)
+        .range(from, to)
+  );
 
   const satisfactionQ = byOrder.get(RATING_SATISFACTION_ORDER);
   const npsQ = byOrder.get(RATING_NPS_ORDER);
@@ -551,30 +604,30 @@ export async function getCampaignDashboard(
   }
   companyName = company?.name ?? null;
 
-  const { data: excludedEmailsData, error: excludedError } = await supabase
-    .from("demo_excluded_emails")
-    .select("email");
-
-  if (excludedError) {
-    throw new Error(`Failed to load excluded emails: ${excludedError.message}`);
-  }
+  const excludedEmailsData = await fetchAllPages<{ email: string | null }>(
+    "Failed to load excluded emails",
+    (from, to) => supabase.from("demo_excluded_emails").select("email").range(from, to)
+  );
 
   const excludedEmails = new Set(
-    (excludedEmailsData ?? [])
+    excludedEmailsData
       .map((row) => row.email?.toLowerCase().trim())
       .filter((v): v is string => Boolean(v))
   );
 
-  const { data: customerRows, error: customerError } = await supabase
-    .from("cms_customers")
-    .select("guid, email, phone_number, referal_code, full_name, username, subscribe_list")
-    .eq("referal_code", referralCode);
+  // A large partner cohort runs past 1000 members; truncating here would drop
+  // people from the dashboard entirely, not just mis-label their activity.
+  const customerRows = await fetchAllPages<CmsCustomer>(
+    "Failed to load campaign cohort",
+    (from, to) =>
+      supabase
+        .from("cms_customers")
+        .select("guid, email, phone_number, referal_code, full_name, username, subscribe_list")
+        .eq("referal_code", referralCode)
+        .range(from, to)
+  );
 
-  if (customerError) {
-    throw new Error(`Failed to load campaign cohort: ${customerError.message}`);
-  }
-
-  const filtered = (customerRows ?? []).filter((row) => {
+  const filtered = customerRows.filter((row) => {
     const emailLower = row.email?.toLowerCase().trim();
     return emailLower ? !excludedEmails.has(emailLower) : true;
   });
@@ -601,38 +654,34 @@ export async function getCampaignDashboard(
   );
 
   if (emailList.length > 0) {
-    const { data, error } = await supabase
-      .from("app_users")
-      .select("id, email, phone")
-      .in("email", emailList);
+    const rows = await fetchAllIn<{ id: string | null; email: string | null; phone: string | null }>(
+      "Failed to load app_users by email",
+      emailList,
+      (emails, from, to) =>
+        supabase.from("app_users").select("id, email, phone").in("email", emails).range(from, to)
+    );
 
-    if (error) {
-      throw new Error(`Failed to load app_users by email: ${error.message}`);
-    }
-
-    (data ?? []).forEach((row) => {
-      const key = normalizeEmail(row.email as string | null | undefined);
-      const id = row.id as string | null;
+    rows.forEach((row) => {
+      const key = normalizeEmail(row.email);
+      const id = row.id;
       if (key && id) emailLookup.set(key, id);
-      if (id) appUserPhoneById.set(id, (row.phone as string | null | undefined) ?? null);
+      if (id) appUserPhoneById.set(id, row.phone ?? null);
     });
   }
 
   if (phoneList.length > 0) {
-    const { data, error } = await supabase
-      .from("app_users")
-      .select("id, phone")
-      .in("phone", phoneList);
+    const rows = await fetchAllIn<{ id: string | null; phone: string | null }>(
+      "Failed to load app_users by phone",
+      phoneList,
+      (phones, from, to) =>
+        supabase.from("app_users").select("id, phone").in("phone", phones).range(from, to)
+    );
 
-    if (error) {
-      throw new Error(`Failed to load app_users by phone: ${error.message}`);
-    }
-
-    (data ?? []).forEach((row) => {
-      const key = normalizePhone(row.phone as string | null | undefined);
-      const id = row.id as string | null;
+    rows.forEach((row) => {
+      const key = normalizePhone(row.phone);
+      const id = row.id;
       if (key && id) phoneLookup.set(key, id);
-      if (id) appUserPhoneById.set(id, (row.phone as string | null | undefined) ?? null);
+      if (id) appUserPhoneById.set(id, row.phone ?? null);
     });
   }
 
@@ -680,58 +729,74 @@ export async function getCampaignDashboard(
   const lastDebitByUser = new Map<string, string | null>();
 
   if (cohortGuids.length > 0) {
-    const txnQuery = supabase
-      .from("transactions")
-      .select("customer_guid")
-      .eq("status", "Finished")
-      .eq("valuta_code", "IDR")
-      .in("customer_guid", cohortGuids);
+    const txns = await fetchAllIn<{ customer_guid: string | null }>(
+      "Failed to load transactions",
+      cohortGuids,
+      (guids, from, to) =>
+        supabase
+          .from("transactions")
+          .select("customer_guid")
+          .eq("status", "Finished")
+          .eq("valuta_code", "IDR")
+          .in("customer_guid", guids)
+          .range(from, to)
+    );
 
-    const { data: txns, error: txnError } = await txnQuery;
-
-    if (txnError) {
-      throw new Error(`Failed to load transactions: ${txnError.message}`);
-    }
-
-    transactions = txns?.length ?? 0;
+    transactions = txns.length;
     purchasers = new Set(
-      (txns ?? [])
+      txns
         .map((row) => row.customer_guid)
         .filter((v): v is string => Boolean(v))
     ).size;
 
-    const { data: creditRows, error: creditError } = await supabase
-      .from("credit_manager_transactions")
-      .select("user_id, created_at")
-      .eq("type", "debit")
-      .in("user_id", cohortGuids)
-      .order("created_at", { ascending: false });
+    /**
+     * No .order() here on purpose. Ordering plus range paging is unstable when
+     * rows share a created_at - the same row can repeat on one page and vanish
+     * from the next. Fetch every debit row and take the max per user instead;
+     * that is order-independent and cannot drop anyone.
+     */
+    const keepLatest = (rows: { user_id: string | null; created_at: string | null }[]) => {
+      for (const row of rows) {
+        const userId = row.user_id;
+        if (!userId || !row.created_at) continue;
+        const at = new Date(row.created_at).getTime();
+        if (Number.isNaN(at)) continue;
+        const seen = lastDebitByUser.get(userId);
+        if (!seen || at > new Date(seen).getTime()) {
+          lastDebitByUser.set(userId, row.created_at);
+        }
+      }
+    };
 
-    if (creditError) {
-      throw new Error(`Failed to load debit usage: ${creditError.message}`);
-    }
-
-    for (const row of creditRows ?? []) {
-      const userId = row.user_id as string | null;
-      if (!userId || lastDebitByUser.has(userId)) continue;
-      lastDebitByUser.set(userId, row.created_at as string | null);
-    }
-
-    // Also query by appUserIds to catch transactions keyed by app_users.id
-    if (appUserIds.size > 0) {
-      const { data: creditRowsByApp, error: creditErrorApp } = await supabase
+    const debitPage = (ids: string[], from: number, to: number) =>
+      supabase
         .from("credit_manager_transactions")
         .select("user_id, created_at")
         .eq("type", "debit")
-        .in("user_id", Array.from(appUserIds))
-        .order("created_at", { ascending: false });
+        .in("user_id", ids)
+        .range(from, to);
 
-      if (!creditErrorApp) {
-        for (const row of creditRowsByApp ?? []) {
-          const userId = row.user_id as string | null;
-          if (!userId || lastDebitByUser.has(userId)) continue;
-          lastDebitByUser.set(userId, row.created_at as string | null);
-        }
+    keepLatest(
+      await fetchAllIn<{ user_id: string | null; created_at: string | null }>(
+        "Failed to load debit usage",
+        cohortGuids,
+        debitPage
+      )
+    );
+
+    // Also query by appUserIds to catch transactions keyed by app_users.id
+    if (appUserIds.size > 0) {
+      try {
+        keepLatest(
+          await fetchAllIn<{ user_id: string | null; created_at: string | null }>(
+            "Failed to load debit usage by app user",
+            Array.from(appUserIds),
+            debitPage
+          )
+        );
+      } catch {
+        // Best-effort lookup, same as before: the guid-keyed pass above already
+        // covers the cohort, so a failure here must not blank out the dashboard.
       }
     }
   }
@@ -741,38 +806,46 @@ export async function getCampaignDashboard(
   const responseIdByCustomerGuid = new Map<string, string>();
 
   if (baselineSurveyId) {
-    const responsePromises = [];
+    const responsePromises: Promise<Record<string, unknown>[]>[] = [];
 
     if (appUserIds.size > 0) {
       responsePromises.push(
-        supabase
-          .from("survey_responses")
-          .select("id, user_id")
-          .eq("survey_id", baselineSurveyId)
-          .in("user_id", Array.from(appUserIds))
+        fetchAllIn<Record<string, unknown>>(
+          "Failed to load survey responses",
+          Array.from(appUserIds),
+          (ids, from, to) =>
+            supabase
+              .from("survey_responses")
+              .select("id, user_id")
+              .eq("survey_id", baselineSurveyId)
+              .in("user_id", ids)
+              .range(from, to)
+        )
       );
     }
 
     const cohortGuidsForSurvey = Array.from(uniqueGuids);
     if (cohortGuidsForSurvey.length > 0) {
       responsePromises.push(
-        supabase
-          .from("survey_responses")
-          .select("id, customer_guid")
-          .eq("survey_id", baselineSurveyId)
-          .in("customer_guid", cohortGuidsForSurvey)
+        fetchAllIn<Record<string, unknown>>(
+          "Failed to load survey responses",
+          cohortGuidsForSurvey,
+          (guids, from, to) =>
+            supabase
+              .from("survey_responses")
+              .select("id, customer_guid")
+              .eq("survey_id", baselineSurveyId)
+              .in("customer_guid", guids)
+              .range(from, to)
+        )
       );
     }
 
     if (responsePromises.length > 0) {
       const responseResults = await Promise.all(responsePromises);
-      const responseErr = responseResults.find((r) => r.error)?.error;
-      if (responseErr) {
-        throw new Error(`Failed to load survey responses: ${responseErr.message}`);
-      }
 
-      for (const res of responseResults) {
-        for (const row of (res.data as any[] | null | undefined) ?? []) {
+      for (const rows of responseResults) {
+        for (const row of rows) {
           const id = row.id as string | null;
           const userId = row.user_id as string | null;
           const customerGuid = row.customer_guid as string | null;
