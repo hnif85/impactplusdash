@@ -150,9 +150,21 @@ export default function EventDetailPage() {
     };
   }, [rows]);
 
-  // Nobody checked in yet -> the links are why you are here. Anyone checked in
-  // -> this is a report now, so they fold away until asked for.
-  const linksOpen = linksOpenOverride ?? (!loading && stats.attended === 0);
+  /**
+   * Closed by default. The links are only useful in the run-up to an event, and
+   * for every event already held - which is most of them, most of the time -
+   * they are dead weight above the findings.
+   *
+   * The one case that earns them being open: the event has not finished yet AND
+   * nobody has checked in, so nothing has been shared. A past event stays closed
+   * even at zero attendance, where "nobody came" is the finding, not a prompt to
+   * hand out links. Local date, not UTC: an event closing today must not read as
+   * past for an admin in WITA.
+   */
+  const lastDay = eventDays.length > 0 ? eventDays[eventDays.length - 1] : null;
+  const today = new Date().toLocaleDateString("en-CA");
+  const eventOver = lastDay !== null && lastDay < today;
+  const linksOpen = linksOpenOverride ?? (!loading && !eventOver && stats.attended === 0);
   const setLinksOpen = (next: boolean) => setLinksOpenOverride(next);
 
   return (
@@ -234,40 +246,54 @@ export default function EventDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard
-          value={stats.attended}
-          label={eventDays.length > 1 ? `Peserta hadir (${eventDays.length} hari)` : "Hadir"}
-        />
-        <StatCard value={stats.quizPre} label="Isi kuis awal" />
-        <StatCard value={stats.quizPost} label="Isi kuis akhir" />
-        <StatCard
-          value={stats.avgQuizDelta === null ? "-" : `${stats.avgQuizDelta > 0 ? "+" : ""}${stats.avgQuizDelta}pp`}
-          label="Δ pengetahuan"
-          tone={stats.avgQuizDelta === null ? "neutral" : stats.avgQuizDelta > 0 ? "up" : stats.avgQuizDelta < 0 ? "down" : "neutral"}
-        />
-      </div>
+      {/*
+        One sentence instead of four stat cards. The cards repeated three of
+        their four numbers in the sentence below them and carried none of the
+        percentages, so the reader had two places to look and neither was
+        complete.
+
+        Only the matched set is quoted for the change: the pre and post rounds
+        usually have different head counts, so their raw averages describe two
+        different groups and their difference means nothing.
+      */}
+      {!loading && !error && (
+        <p className="text-sm text-zinc-300">
+          <span className="font-semibold text-white">
+            {stats.attended} peserta hadir
+            {eventDays.length > 1 && <span className="font-normal text-zinc-500"> ({eventDays.length} hari)</span>}
+          </span>
+          {quizTotal > 0 && (
+            <>
+              , {stats.quizPost} mengisi kuis akhir.
+              {quizBasisMatched && stats.avgQuizDelta !== null ? (
+                <>
+                  {" "}
+                  {quizBasis} mengikuti keduanya: pengetahuan{" "}
+                  <span className="font-semibold text-emerald-400">
+                    {stats.avgQuizPre}% → {stats.avgQuizPost}%
+                  </span>{" "}
+                  <span className="text-zinc-500">
+                    ({stats.avgQuizDelta > 0 ? "+" : ""}{stats.avgQuizDelta}pp)
+                  </span>
+                  .
+                </>
+              ) : (
+                <span className="text-zinc-500">
+                  {" "}
+                  Belum ada yang mengikuti kuis awal dan akhir, jadi belum ada pembanding.
+                </span>
+              )}
+            </>
+          )}
+          {quizTotal === 0 && "."}
+        </p>
+      )}
 
       {eventDays.length > 1 && (
         <p className="text-[11px] text-zinc-500">
           Event {eventDays.length} hari ({eventDays[0]} — {eventDays[eventDays.length - 1]}).
           Peserta absen tiap hari; survey tetap sekali isi.
           Kolom Hadir menunjukkan berapa hari mereka datang.
-        </p>
-      )}
-
-      {/* One sentence a reader can quote, instead of assembling it from four
-          stat cards. Only the matched set is quoted: the pre and post rounds
-          usually have different head counts, so their raw averages are not
-          comparable. */}
-      {quizTotal > 0 && quizBasisMatched && stats.avgQuizDelta !== null && (
-        <p className="text-sm text-zinc-300">
-          <span className="font-semibold text-white">{stats.attended} peserta hadir.</span>{" "}
-          {quizBasis} mengikuti kuis awal dan akhir: pengetahuan naik{" "}
-          <span className="font-semibold text-emerald-400">
-            {stats.avgQuizPre}% → {stats.avgQuizPost}%
-          </span>{" "}
-          <span className="text-zinc-500">({stats.avgQuizDelta > 0 ? "+" : ""}{stats.avgQuizDelta}pp)</span>.
         </p>
       )}
 
@@ -730,16 +756,6 @@ function ShareLink({ label, hint, url }: { label: string; hint: string; url: str
           {copied ? "Tersalin!" : "Copy"}
         </button>
       </div>
-    </div>
-  );
-}
-
-function StatCard({ value, label, tone = "neutral" }: { value: number | string; label: string; tone?: "up" | "down" | "neutral" }) {
-  const color = tone === "up" ? "text-emerald-400" : tone === "down" ? "text-red-400" : "text-zinc-200";
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center">
-      <p className={`text-2xl font-bold ${color}`}>{value}</p>
-      <p className="text-xs text-zinc-400">{label}</p>
     </div>
   );
 }
